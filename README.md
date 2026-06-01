@@ -1,56 +1,40 @@
 # Predexonooor
 
-基于 Predexon（Data API + Trading API）的 VPS 自动化交易机器人骨架，面向 Free plan 也能先跑通的“低频快进快出”策略框架。
+基于 Predexon（Data API + Trading API）的 TypeScript 交易机器人骨架，目标是在 **Free plan**（无 WebSocket / 无 SmartMoney / 无 Matching）也能先跑通交易闭环，并用 **pm2** 在 VPS 上长期运行。
 
-## 目标
+本期仅支持 venues：**Polymarket + Limitless**，并在两者之间按盘口流动性打分择优执行。
 
-- Free plan 可运行：不依赖 WebSocket、Smart Money、Matching（这些在 Free 上会 403）
-- 多 venue 执行：通过 Canonical outcome（`predexon_id`）解析可交易 listings，并用 Trading API 选择流动性更好的 venue 下单
-- 先保命再扩展：默认风控按 100u 资金保守配置，先跑通并积累真实成交与滑点数据
+## 快速开始
 
-参考文档：
-- Rate limits / free endpoints: https://docs.predexon.com/rate-limits
-- Canonical outcome: https://docs.predexon.com/api-reference/canonical/outcome
-- Trading API overview: https://docs.predexon.com/execution/overview
-- Best practices: https://docs.predexon.com/start-here/best-practices
-
-## 快速开始（本地或 VPS）
-
-1) 安装依赖
+1) 安装依赖（Node v20.20.2）
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+npm i
+npm run build
 ```
 
-2) 配置 API Key
+2) 设置 API Key
 
 ```bash
 export PREDEXON_API_KEY="pk_..."
 ```
 
-3) 创建账户与启用 venue
+3) Trading API：创建账户并启用 venues
 
 ```bash
-python -m predexonooor health
-python -m predexonooor account create
-python -m predexonooor account enable --account-id <ACCOUNT_ID> --venue polymarket
-python -m predexonooor account enable --account-id <ACCOUNT_ID> --venue limitless
+node dist/cli.js health
+node dist/cli.js account create
+node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue polymarket
+node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue limitless
 ```
 
-4) 配置并运行（默认 dry_run）
+4) 配置与运行（先 dry_run）
 
 ```bash
 cp config.example.yaml config.local.yaml
-python -m predexonooor bot --config config.local.yaml --db state.db
+node dist/cli.js bot --config config.local.yaml --state state.json
 ```
 
-## 运行模式
+## pm2 部署
 
-- `mode: dry_run`：只打印信号与风控决策，不会下单
-- `mode: live`：真实下单，必须填写 `account_id`
-
-## 部署
-
-见 [docs/VPS_DEPLOYMENT.md](file:///workspace/Predexonooor/docs/VPS_DEPLOYMENT.md)。
+见 [VPS_PM2.md](file:///workspace/Predexonooor/docs/VPS_PM2.md)

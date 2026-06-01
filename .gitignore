@@ -1,13 +1,7 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+node_modules/
 dist/
-build/
 
 .env
 config.local.yaml
-state.db
+state.json
 logs/

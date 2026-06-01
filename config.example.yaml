@@ -12,8 +12,6 @@ venues:
   prefer_order:
     - polymarket
     - limitless
-    - predict
-    - opinion
 
 liquidity:
   max_spread: 0.02
