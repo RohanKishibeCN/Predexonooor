@@ -13,11 +13,13 @@ npm i
 npm run build
 ```
 
-2) 设置 API Key
+2) 配置（统一用 env 文件）
 
 ```bash
-export PREDEXON_API_KEY="pk_..."
+cp .env.example .env
 ```
+
+参数清单见 [ENV.md](file:///workspace/Predexonooor/docs/ENV.md)
 
 3) Trading API：创建账户并启用 venues
 
@@ -28,11 +30,10 @@ node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue polymarket
 node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue limitless
 ```
 
-4) 配置与运行（先 dry_run）
+把 `ACCOUNT_ID` 回填进 `.env`，然后运行（先 dry_run）
 
 ```bash
-cp config.example.yaml config.local.yaml
-node dist/cli.js bot --config config.local.yaml --state state.json
+node dist/cli.js bot
 ```
 
 ## pm2 部署

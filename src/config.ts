@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import YAML from "yaml";
-
 export type Mode = "dry_run" | "live";
 
 export type AppConfig = {
@@ -35,7 +32,10 @@ export type AppConfig = {
   };
 };
 
-const mustNumber = (v: unknown, path: string): number => {
+const mustNumber = (v: unknown, path: string, defaultValue?: number): number => {
+  if (v === undefined || v === null || v === "") {
+    if (defaultValue !== undefined) return defaultValue;
+  }
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) {
     throw new Error(`Invalid number at ${path}`);
@@ -43,76 +43,69 @@ const mustNumber = (v: unknown, path: string): number => {
   return n;
 };
 
-const mustInt = (v: unknown, path: string): number => {
-  const n = mustNumber(v, path);
+const mustInt = (v: unknown, path: string, defaultValue?: number): number => {
+  const n = mustNumber(v, path, defaultValue);
   if (!Number.isInteger(n)) {
     throw new Error(`Invalid int at ${path}`);
   }
   return n;
 };
 
-export const loadConfig = (path: string): AppConfig => {
-  const raw = YAML.parse(fs.readFileSync(path, "utf8")) as any;
-  if (!raw || typeof raw !== "object") throw new Error("Config root must be a YAML mapping");
+const mustMode = (v: unknown): Mode => {
+  const s = String(v ?? "dry_run");
+  if (s !== "dry_run" && s !== "live") throw new Error("MODE must be dry_run or live");
+  return s;
+};
 
+const mustVenueList = (v: unknown, defaultValue: Array<"polymarket" | "limitless">): Array<"polymarket" | "limitless"> => {
+  const s = String(v ?? "").trim();
+  if (!s) return defaultValue;
+  const items = s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const allowed = new Set(["polymarket", "limitless"]);
+  const out: Array<"polymarket" | "limitless"> = [];
+  for (const it of items) {
+    if (!allowed.has(it)) throw new Error(`Invalid venue in ENABLED_VENUES: ${it}`);
+    out.push(it as any);
+  }
+  return out.length ? out : defaultValue;
+};
+
+export const loadConfigFromEnv = (): AppConfig => {
   const cfg: AppConfig = {
-    mode: (raw.mode ?? "dry_run") as Mode,
-    accountId: String(raw.account_id ?? raw.accountId ?? ""),
-    pollIntervalSeconds: mustInt(raw.poll_interval_seconds ?? raw.pollIntervalSeconds ?? 20, "pollIntervalSeconds"),
-    maxMarketsScan: mustInt(raw.max_markets_scan ?? raw.maxMarketsScan ?? 30, "maxMarketsScan"),
+    mode: mustMode(process.env.MODE),
+    accountId: String(process.env.ACCOUNT_ID ?? ""),
+    pollIntervalSeconds: mustInt(process.env.POLL_INTERVAL_SECONDS, "POLL_INTERVAL_SECONDS", 20),
+    maxMarketsScan: mustInt(process.env.MAX_MARKETS_SCAN, "MAX_MARKETS_SCAN", 30),
     venues: {
-      enabled: (raw.venues?.enabled ?? ["polymarket", "limitless"]) as any,
-      preferOrder: (raw.venues?.prefer_order ?? raw.venues?.preferOrder ?? ["polymarket", "limitless"]) as any
+      enabled: mustVenueList(process.env.ENABLED_VENUES, ["polymarket", "limitless"]),
+      preferOrder: mustVenueList(process.env.VENUE_PREFER_ORDER, ["polymarket", "limitless"])
     },
     liquidity: {
-      maxSpread: mustNumber(raw.liquidity?.max_spread ?? raw.liquidity?.maxSpread ?? 0.02, "liquidity.maxSpread"),
-      minTopDepthUsd: mustNumber(
-        raw.liquidity?.min_top_depth_usd ?? raw.liquidity?.minTopDepthUsd ?? 20,
-        "liquidity.minTopDepthUsd"
-      )
+      maxSpread: mustNumber(process.env.MAX_SPREAD, "MAX_SPREAD", 0.02),
+      minTopDepthUsd: mustNumber(process.env.MIN_TOP_DEPTH_USD, "MIN_TOP_DEPTH_USD", 20)
     },
     risk: {
-      startingCapitalUsd: mustNumber(
-        raw.risk?.starting_capital_usd ?? raw.risk?.startingCapitalUsd ?? 100,
-        "risk.startingCapitalUsd"
-      ),
-      maxPerTradeUsd: mustNumber(raw.risk?.max_per_trade_usd ?? raw.risk?.maxPerTradeUsd ?? 5, "risk.maxPerTradeUsd"),
-      maxExposurePerMarketUsd: mustNumber(
-        raw.risk?.max_exposure_per_market_usd ?? raw.risk?.maxExposurePerMarketUsd ?? 10,
-        "risk.maxExposurePerMarketUsd"
-      ),
-      maxTotalExposureUsd: mustNumber(
-        raw.risk?.max_total_exposure_usd ?? raw.risk?.maxTotalExposureUsd ?? 30,
-        "risk.maxTotalExposureUsd"
-      ),
-      maxOpenPositions: mustInt(raw.risk?.max_open_positions ?? raw.risk?.maxOpenPositions ?? 3, "risk.maxOpenPositions"),
-      dailyMaxLossUsd: mustNumber(raw.risk?.daily_max_loss_usd ?? raw.risk?.dailyMaxLossUsd ?? 3, "risk.dailyMaxLossUsd"),
-      maxDrawdownUsd: mustNumber(raw.risk?.max_drawdown_usd ?? raw.risk?.maxDrawdownUsd ?? 8, "risk.maxDrawdownUsd")
+      startingCapitalUsd: mustNumber(process.env.STARTING_CAPITAL_USD, "STARTING_CAPITAL_USD", 100),
+      maxPerTradeUsd: mustNumber(process.env.MAX_PER_TRADE_USD, "MAX_PER_TRADE_USD", 5),
+      maxExposurePerMarketUsd: mustNumber(process.env.MAX_EXPOSURE_PER_MARKET_USD, "MAX_EXPOSURE_PER_MARKET_USD", 10),
+      maxTotalExposureUsd: mustNumber(process.env.MAX_TOTAL_EXPOSURE_USD, "MAX_TOTAL_EXPOSURE_USD", 30),
+      maxOpenPositions: mustInt(process.env.MAX_OPEN_POSITIONS, "MAX_OPEN_POSITIONS", 3),
+      dailyMaxLossUsd: mustNumber(process.env.DAILY_MAX_LOSS_USD, "DAILY_MAX_LOSS_USD", 3),
+      maxDrawdownUsd: mustNumber(process.env.MAX_DRAWDOWN_USD, "MAX_DRAWDOWN_USD", 8)
     },
     execution: {
       entry: {
-        takeProfitPct: mustNumber(
-          raw.execution?.entry?.take_profit_pct ?? raw.execution?.entry?.takeProfitPct ?? 0.01,
-          "execution.entry.takeProfitPct"
-        ),
-        stopLossPct: mustNumber(
-          raw.execution?.entry?.stop_loss_pct ?? raw.execution?.entry?.stopLossPct ?? 0.015,
-          "execution.entry.stopLossPct"
-        ),
-        maxHoldMinutes: mustInt(
-          raw.execution?.entry?.max_hold_minutes ?? raw.execution?.entry?.maxHoldMinutes ?? 60,
-          "execution.entry.maxHoldMinutes"
-        )
+        takeProfitPct: mustNumber(process.env.TAKE_PROFIT_PCT, "TAKE_PROFIT_PCT", 0.01),
+        stopLossPct: mustNumber(process.env.STOP_LOSS_PCT, "STOP_LOSS_PCT", 0.015),
+        maxHoldMinutes: mustInt(process.env.MAX_HOLD_MINUTES, "MAX_HOLD_MINUTES", 60)
       },
-      slippageGuardPct: mustNumber(
-        raw.execution?.slippage_guard_pct ?? raw.execution?.slippageGuardPct ?? 0.008,
-        "execution.slippageGuardPct"
-      )
+      slippageGuardPct: mustNumber(process.env.SLIPPAGE_GUARD_PCT, "SLIPPAGE_GUARD_PCT", 0.008)
     }
   };
 
-  if (cfg.mode !== "dry_run" && cfg.mode !== "live") throw new Error("mode must be dry_run or live");
-  if (cfg.mode === "live" && !cfg.accountId) throw new Error("account_id/accountId is required in live mode");
+  if (cfg.mode === "live" && !cfg.accountId) throw new Error("ACCOUNT_ID is required when MODE=live");
   return cfg;
 };
-

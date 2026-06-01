@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "predexonooor",
       script: "dist/cli.js",
-      args: "bot --config config.local.yaml --state state.json",
+      args: "bot",
       autorestart: true,
       max_restarts: 10,
       time: true,
@@ -14,4 +14,3 @@ module.exports = {
     }
   ]
 };
-
