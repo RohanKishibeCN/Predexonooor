@@ -1,13 +1,15 @@
 import { Command } from "commander";
 import process from "node:process";
+import dotenv from "dotenv";
 
-import { loadConfig } from "./config.js";
+import { loadConfigFromEnv } from "./config.js";
 import { runBot } from "./engine.js";
 import { DataClient, TradeClient } from "./predexon.js";
 
 const main = async () => {
   const program = new Command();
   program.name("predexonooor");
+  program.option("--env-file <path>", "env file path", ".env");
 
   program
     .command("health")
@@ -53,20 +55,29 @@ const main = async () => {
 
   program
     .command("bot")
-    .requiredOption("--config <path>")
-    .option("--state <path>", "state json path", "state.json")
+    .option("--state <path>", "state json path")
     .action(async (opts) => {
-      const cfg = loadConfig(String(opts.config));
+      const statePath = String(opts.state ?? process.env.STATE_PATH ?? "state.json");
+      const cfg = loadConfigFromEnv();
       const data = new DataClient();
       const trade = new TradeClient();
-      await runBot(cfg, { data, trade, statePath: String(opts.state) });
+      await runBot(cfg, { data, trade, statePath });
     });
 
   await program.parseAsync(process.argv);
 };
 
-main().catch((e) => {
+const boot = async () => {
+  const envFile = (() => {
+    const idx = process.argv.findIndex((a) => a === "--env-file");
+    if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1];
+    return ".env";
+  })();
+  dotenv.config({ path: envFile });
+  await main();
+};
+
+boot().catch((e) => {
   process.stderr.write(String(e?.stack ?? e) + "\n");
   process.exitCode = 1;
 });
-

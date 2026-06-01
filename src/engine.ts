@@ -12,6 +12,7 @@ type VenueListing = {
   venue: string;
   tokenId?: string;
   marketSlug?: string;
+  side?: string;
 };
 
 const parseListings = (outcome: any): VenueListing[] => {
@@ -19,13 +20,17 @@ const parseListings = (outcome: any): VenueListing[] => {
   return venues.map((v) => ({
     venue: String(v?.venue ?? ""),
     tokenId: v?.token_id ? String(v.token_id) : undefined,
-    marketSlug: v?.market_slug ? String(v.market_slug) : undefined
+    marketSlug: v?.market_slug ? String(v.market_slug) : undefined,
+    side: v?.side ? String(v.side) : undefined
   }));
 };
 
 const quoteListing = async (data: DataClient, listing: VenueListing) => {
   if (listing.venue === "polymarket" && listing.tokenId) return await quotePolymarketToken(data, listing.tokenId);
-  if (listing.venue === "limitless" && listing.marketSlug) return await quoteLimitlessMarket(data, listing.marketSlug);
+  if (listing.venue === "limitless" && listing.marketSlug) {
+    const side = listing.side === "no" ? "no" : "yes";
+    return await quoteLimitlessMarket(data, listing.marketSlug, side);
+  }
   return null;
 };
 

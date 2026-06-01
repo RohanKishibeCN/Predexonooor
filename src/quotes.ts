@@ -43,6 +43,7 @@ export const quotePolymarketToken = async (
 export const quoteLimitlessMarket = async (
   data: DataClient,
   marketSlug: string,
+  side: "yes" | "no" = "yes",
   lookbackMs = 5 * 60 * 1000
 ): Promise<TopOfBook | null> => {
   const endMs = nowMs();
@@ -56,6 +57,12 @@ export const quoteLimitlessMarket = async (
   const b = extractBest(bids, "bid");
   const a = extractBest(asks, "ask");
   if (b.price <= 0 || a.price <= 0) return null;
-  return { venue: "limitless", bestBid: b.price, bestAsk: a.price, bidSize: b.size, askSize: a.size };
+  if (side === "yes") {
+    return { venue: "limitless", bestBid: b.price, bestAsk: a.price, bidSize: b.size, askSize: a.size };
+  }
+  const bestBid = 1 - a.price;
+  const bestAsk = 1 - b.price;
+  const bidSize = a.size;
+  const askSize = b.size;
+  return { venue: "limitless", bestBid, bestAsk, bidSize, askSize };
 };
-

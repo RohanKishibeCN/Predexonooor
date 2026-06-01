@@ -13,7 +13,7 @@
 
 ## 项目结构（TS 版本）
 
-- 配置：YAML（[config.example.yaml](file:///workspace/Predexonooor/config.example.yaml)）
+- 配置：env 文件（[.env.example](file:///workspace/Predexonooor/.env.example)）
 - Data / Trading API 客户端：[`src/predexon.ts`](file:///workspace/Predexonooor/src/predexon.ts)
 - Free tier 限流：[`src/limiter.ts`](file:///workspace/Predexonooor/src/limiter.ts)
 - 盘口抽象与抓取：
@@ -38,4 +38,3 @@
 
 - 真正的“锁定收益套利”通常要求买 YES + 买 NO，利润在结算时兑现，会锁定资金到到期。
 - 你要求快进快出，本期实现采用短持仓管理（TP/SL/时间止损）与严格限额，先验证执行质量与滑点。
-
