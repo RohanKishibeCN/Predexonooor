@@ -357,7 +357,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
     let openAfter = state.positions.filter((p) => p.status === "open");
     if (openAfter.length < cfg.risk.maxOpenPositions) {
       await limiter.wait();
-      const marketsPayload = await opts.data.listCanonicalMarkets({ limit: cfg.maxMarketsScan });
+      const marketsPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
       const candidates = extractMarketCandidates(marketsPayload);
 
       for (const c of candidates) {
