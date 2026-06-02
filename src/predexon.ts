@@ -65,7 +65,25 @@ export class DataClient {
   baseUrl = "https://api.predexon.com";
 
   health(): Promise<any> {
-    return this.listPolymarketMarkets({ limit: 1 });
+    return this.listCanonicalMarkets({ limit: 1 });
+  }
+
+  listCanonicalMarkets(params: {
+    status?: string;
+    sort?: string;
+    limit?: number;
+    routableOnly?: boolean;
+    includeVenueListings?: boolean;
+  }): Promise<any> {
+    const u = new URL(`${this.baseUrl}/v2/markets`);
+    u.searchParams.set("status", params.status ?? "open");
+    u.searchParams.set("sort", params.sort ?? "volume");
+    u.searchParams.set("limit", String(params.limit ?? 30));
+    u.searchParams.set("routable_only", String(params.routableOnly ?? true));
+    if (params.includeVenueListings !== undefined) {
+      u.searchParams.set("include_venue_listings", String(params.includeVenueListings));
+    }
+    return request(u.toString());
   }
 
   listPolymarketMarkets(params: { status?: string; sort?: string; limit?: number }): Promise<any> {
