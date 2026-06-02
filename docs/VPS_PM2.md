@@ -38,7 +38,7 @@ node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue polymarket
 node dist/cli.js account enable --account-id <ACCOUNT_ID> --venue limitless
 ```
 
-把 `ACCOUNT_ID` 写进 `.env`，第一次建议先 `MODE=dry_run` 跑一段时间。
+把 `ACCOUNT_ID` 写进 `.env`，如需先验证逻辑但不下真实订单，可设置 `DRY_RUN=1`（优先级高于 `MODE`）。
 
 ### 5) pm2 启动
 

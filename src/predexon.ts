@@ -124,23 +124,37 @@ export class TradeClient {
     return request(u.toString());
   }
 
+  getPositions(accountId: string, aggregated = false): Promise<any> {
+    const u = new URL(`${this.baseUrl}/api/accounts/${accountId}/positions`);
+    u.searchParams.set("aggregated", String(aggregated));
+    return request(u.toString());
+  }
+
+  getDepositInfo(accountId: string): Promise<any> {
+    return request(`${this.baseUrl}/api/accounts/${accountId}/deposit-info`);
+  }
+
   placeOrder(params: {
     accountId: string;
     venue: Venue;
-    tokenId: string;
+    predexonId?: string;
+    market?: { tokenId?: string; marketSlug?: string };
     side: "buy" | "sell";
     type: "market" | "limit";
-    size: number;
+    amount?: number;
+    size?: number;
     price?: number;
     clientId?: string;
   }): Promise<any> {
     const payload: any = {
       venue: params.venue,
-      market: { tokenId: params.tokenId },
       side: params.side,
-      type: params.type,
-      size: String(params.size)
+      type: params.type
     };
+    if (params.predexonId) payload.predexonId = params.predexonId;
+    if (params.market) payload.market = params.market;
+    if (params.amount !== undefined) payload.amount = String(params.amount);
+    if (params.size !== undefined) payload.size = String(params.size);
     if (params.price !== undefined) payload.price = String(params.price);
     if (params.clientId) payload.clientId = params.clientId;
 
@@ -153,4 +167,3 @@ export class TradeClient {
 }
 
 export const nowMs = (): number => Date.now();
-

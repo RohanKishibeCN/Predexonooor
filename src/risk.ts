@@ -17,7 +17,10 @@ export type RiskState = {
 
 export const todayKey = (): string => {
   const d = new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
 
 export const initialRiskState = (limits: RiskLimits): RiskState => ({
@@ -52,4 +55,3 @@ export const canOpenTrade = (opts: {
 
   return { ok: true, reason: "ok" };
 };
-
