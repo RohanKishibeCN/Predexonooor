@@ -65,7 +65,24 @@ export class DataClient {
   baseUrl = "https://api.predexon.com";
 
   health(): Promise<any> {
-    return this.listCanonicalMarkets({ limit: 1 });
+    return this.listDiscoveryMarkets({ limit: 1 });
+  }
+
+  async listDiscoveryMarkets(params: {
+    status?: string;
+    sort?: string;
+    limit?: number;
+    routableOnly?: boolean;
+    includeVenueListings?: boolean;
+  }): Promise<any> {
+    try {
+      return await this.listCanonicalMarkets(params);
+    } catch (e: any) {
+      if (e instanceof PredexonApiError && e.statusCode === 403) {
+        return await this.listPolymarketMarkets({ status: params.status, sort: params.sort, limit: params.limit });
+      }
+      throw e;
+    }
   }
 
   listCanonicalMarkets(params: {
