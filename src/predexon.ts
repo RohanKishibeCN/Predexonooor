@@ -13,14 +13,24 @@ export class PredexonApiError extends Error {
   }
 }
 
-const mustApiKey = (): string => {
-  const k = process.env.PREDEXON_API_KEY;
-  if (!k) throw new Error("Missing PREDEXON_API_KEY");
-  return k;
+const pickApiKey = (url: string): string => {
+  const host = new URL(url).host;
+  const fallback = String(process.env.PREDEXON_API_KEY ?? "").trim();
+
+  if (host === "api.predexon.com") {
+    return String(process.env.PREDEXON_DATA_API_KEY ?? fallback).trim();
+  }
+
+  if (host === "trade.predexon.com") {
+    return String(process.env.PREDEXON_TRADING_API_KEY ?? fallback).trim();
+  }
+
+  return fallback;
 };
 
-const withApiKey = (headers?: HeadersInit): HeadersInit => {
-  const k = mustApiKey();
+const withApiKey = (url: string, headers?: HeadersInit): HeadersInit => {
+  const k = pickApiKey(url);
+  if (!k) throw new Error("Missing Predexon API key (set PREDEXON_DATA_API_KEY / PREDEXON_TRADING_API_KEY)");
   return { ...(headers ?? {}), "x-api-key": k };
 };
 
@@ -37,7 +47,7 @@ const request = async (url: string, init: RequestInit & { timeoutMs?: number } =
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...init, signal: controller.signal, headers: withApiKey(init.headers) });
+    const res = await fetch(url, { ...init, signal: controller.signal, headers: withApiKey(url, init.headers) });
     if (res.ok) return await res.json();
     const payload = await parseJsonSafe(res);
     throw new PredexonApiError({
@@ -55,7 +65,7 @@ export class DataClient {
   baseUrl = "https://api.predexon.com";
 
   health(): Promise<any> {
-    return request(`${this.baseUrl}/health`);
+    return this.listPolymarketMarkets({ limit: 1 });
   }
 
   listPolymarketMarkets(params: { status?: string; sort?: string; limit?: number }): Promise<any> {

@@ -4,7 +4,12 @@
 
 ## 必填
 
-- `PREDEXON_API_KEY`：Predexon API Key
+- `PREDEXON_DATA_API_KEY`：Predexon Data API Key（推荐）
+- `PREDEXON_TRADING_API_KEY`：Predexon Trading API Key（推荐）
+
+兼容项（不推荐）：
+
+- `PREDEXON_API_KEY`：单 key 兼容模式（如果你只有一把 key，或两把 key 临时想用同一把填这里）
 
 ## 运行模式
 
