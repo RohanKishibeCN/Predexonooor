@@ -4,7 +4,7 @@ import { AppConfig } from "./config.js";
 import { RateLimiter } from "./limiter.js";
 import { scoreTopOfBook } from "./liquidity.js";
 import { quoteLimitlessMarket, quotePolymarketToken, mid } from "./quotes.js";
-import { DataClient, TradeClient } from "./predexon.js";
+import { DataClient, PredexonApiError, TradeClient } from "./predexon.js";
 import { applyFillToLedger, exposuresByMarket, loadState, realizedToday, saveState, totalExposure, type BotState, type Fill } from "./state.js";
 import { RiskLimits, canOpenTrade, initialRiskState } from "./risk.js";
 
@@ -78,7 +78,23 @@ const pickBestLiquidity = async (opts: {
   | null
 > => {
   await opts.limiter.wait();
-  const outcome = await opts.data.getOutcome(opts.predexonId, true);
+  let outcome: any;
+  try {
+    outcome = await opts.data.getOutcome(opts.predexonId, true);
+  } catch (e: any) {
+    if (e instanceof PredexonApiError && e.statusCode === 404) {
+      process.stdout.write(JSON.stringify({ event: "skip_outcome_404", predexonId: opts.predexonId }, null, 2) + "\n");
+      return null;
+    }
+    process.stdout.write(
+      JSON.stringify(
+        { event: "outcome_error", predexonId: opts.predexonId, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+        null,
+        2
+      ) + "\n"
+    );
+    return null;
+  }
   const listings = parseListings(outcome).filter((l) => opts.enabledVenues.has(l.venue));
 
   let best:
@@ -97,7 +113,19 @@ const pickBestLiquidity = async (opts: {
 
   for (const l of listings) {
     await opts.limiter.wait();
-    const q = await quoteListing(opts.data, l);
+    let q: any = null;
+    try {
+      q = await quoteListing(opts.data, l);
+    } catch (e: any) {
+      process.stdout.write(
+        JSON.stringify(
+          { event: "quote_error", predexonId: opts.predexonId, venue: l.venue, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+          null,
+          2
+        ) + "\n"
+      );
+      continue;
+    }
     if (!q) continue;
     const s = scoreTopOfBook(q);
     const tokenId = q.venue === "polymarket" ? l.tokenId : undefined;
@@ -171,18 +199,55 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       await limiter.wait();
       if (pos.venue === "polymarket") {
         if (!pos.tokenId) continue;
-        const q = await quotePolymarketToken(opts.data, pos.tokenId);
+        let q: any = null;
+        try {
+          q = await quotePolymarketToken(opts.data, pos.tokenId);
+        } catch (e: any) {
+          process.stdout.write(
+            JSON.stringify(
+              { event: "quote_error", predexonId: pos.predexonId, venue: "polymarket", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+              null,
+              2
+            ) + "\n"
+          );
+          continue;
+        }
         if (q) {
           qMid = mid(q);
           bestBid = q.bestBid;
           bestAsk = q.bestAsk;
         }
       } else if (pos.venue === "limitless") {
-        const outcome = await opts.data.getOutcome(pos.predexonId, true);
+        let outcome: any;
+        try {
+          outcome = await opts.data.getOutcome(pos.predexonId, true);
+        } catch (e: any) {
+          if (e instanceof PredexonApiError && e.statusCode === 404) continue;
+          process.stdout.write(
+            JSON.stringify(
+              { event: "outcome_error", predexonId: pos.predexonId, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+              null,
+              2
+            ) + "\n"
+          );
+          continue;
+        }
         const listing = parseListings(outcome).find((l) => l.venue === "limitless");
         if (listing?.marketSlug) {
           const side = listing.side === "no" ? "no" : "yes";
-          const q = await quoteLimitlessMarket(opts.data, listing.marketSlug, side);
+          let q: any = null;
+          try {
+            q = await quoteLimitlessMarket(opts.data, listing.marketSlug, side);
+          } catch (e: any) {
+            process.stdout.write(
+              JSON.stringify(
+                { event: "quote_error", predexonId: pos.predexonId, venue: "limitless", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                null,
+                2
+              ) + "\n"
+            );
+            continue;
+          }
           if (q) {
             qMid = mid(q);
             bestBid = q.bestBid;
