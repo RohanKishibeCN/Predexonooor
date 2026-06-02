@@ -64,6 +64,7 @@ const pickBestLiquidity = async (opts: {
   predexonId: string;
   enabledVenues: Set<string>;
   limiter: RateLimiter;
+  onOutcome404?: (predexonId: string) => void;
 }): Promise<
   | {
       venue: "polymarket" | "limitless";
@@ -83,7 +84,7 @@ const pickBestLiquidity = async (opts: {
     outcome = await opts.data.getOutcome(opts.predexonId, true);
   } catch (e: any) {
     if (e instanceof PredexonApiError && e.statusCode === 404) {
-      process.stdout.write(JSON.stringify({ event: "skip_outcome_404", predexonId: opts.predexonId }, null, 2) + "\n");
+      if (opts.onOutcome404) opts.onOutcome404(opts.predexonId);
       return null;
     }
     process.stdout.write(
@@ -180,6 +181,22 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
   const health = { data: await opts.data.health(), trade: await opts.trade.health() };
   process.stdout.write(JSON.stringify({ health }, null, 2) + "\n");
+
+  const outcome404Until = new Map<string, number>();
+  const outcome404TtlMs = 6 * 60 * 60_000;
+  let outcome404Count = 0;
+  let lastOutcome404LogAt = 0;
+
+  const onOutcome404 = (predexonId: string): void => {
+    outcome404Until.set(predexonId, Date.now() + outcome404TtlMs);
+    outcome404Count += 1;
+    const now = Date.now();
+    if (now - lastOutcome404LogAt >= 60_000) {
+      lastOutcome404LogAt = now;
+      process.stdout.write(JSON.stringify({ event: "skip_outcome_404_batch", count: outcome404Count }, null, 2) + "\n");
+      outcome404Count = 0;
+    }
+  };
 
   const syncRealizedRisk = (): void => {
     const day = todayISO();
@@ -340,7 +357,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
     let openAfter = state.positions.filter((p) => p.status === "open");
     if (openAfter.length < cfg.risk.maxOpenPositions) {
       await limiter.wait();
-      const marketsPayload = await opts.data.listPolymarketMarkets({ limit: cfg.maxMarketsScan });
+      const marketsPayload = await opts.data.listCanonicalMarkets({ limit: cfg.maxMarketsScan });
       const candidates = extractMarketCandidates(marketsPayload);
 
       for (const c of candidates) {
@@ -351,11 +368,15 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         const expByMarket = exposuresByMarket(state);
         const expTotal = totalExposure(state);
 
+        const blockedUntil = outcome404Until.get(c.predexonId);
+        if (blockedUntil && blockedUntil > Date.now()) continue;
+
         const best = await pickBestLiquidity({
           data: opts.data,
           predexonId: c.predexonId,
           enabledVenues,
-          limiter
+          limiter,
+          onOutcome404
         });
         if (!best) continue;
 
