@@ -8,8 +8,9 @@
 
 ## 运行模式
 
-- `MODE`：`dry_run` 或 `live`（默认 `dry_run`）
-- `ACCOUNT_ID`：Trading API account id（`MODE=live` 时必填）
+- `MODE`：`dry_run` 或 `live`（默认 `live`）
+- `DRY_RUN`：`1`/`0`（优先级高于 `MODE`；`1` 强制 dry-run）
+- `ACCOUNT_ID`：Trading API account id（`MODE=live` 且 `DRY_RUN!=1` 时必填）
 - `STATE_PATH`：状态文件路径（默认 `state.json`）
 
 ## 扫描与节奏
@@ -44,3 +45,10 @@
 - `MAX_HOLD_MINUTES`（默认 `60`）
 - `SLIPPAGE_GUARD_PCT`（默认 `0.008`）
 
+## Notion 日报（可选）
+
+- `NOTION_API_TOKEN`：Notion integration token
+- `NOTION_DATABASE_ID`：Notion database id（你的日报数据表）
+- `NOTION_VERSION`：Notion-Version header（默认 `2022-06-28`）
+
+配套 Notion 字段建议见 [NOTION_SCHEMA.md](file:///workspace/Predexonooor/docs/NOTION_SCHEMA.md)。

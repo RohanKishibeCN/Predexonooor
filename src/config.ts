@@ -52,9 +52,15 @@ const mustInt = (v: unknown, path: string, defaultValue?: number): number => {
 };
 
 const mustMode = (v: unknown): Mode => {
-  const s = String(v ?? "dry_run");
+  const s = String(v ?? "live");
   if (s !== "dry_run" && s !== "live") throw new Error("MODE must be dry_run or live");
   return s;
+};
+
+const toBool = (v: unknown): boolean => {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (!s) return false;
+  return s === "1" || s === "true" || s === "yes" || s === "y" || s === "on";
 };
 
 const mustVenueList = (v: unknown, defaultValue: Array<"polymarket" | "limitless">): Array<"polymarket" | "limitless"> => {
@@ -74,8 +80,9 @@ const mustVenueList = (v: unknown, defaultValue: Array<"polymarket" | "limitless
 };
 
 export const loadConfigFromEnv = (): AppConfig => {
+  const forcedDryRun = toBool(process.env.DRY_RUN);
   const cfg: AppConfig = {
-    mode: mustMode(process.env.MODE),
+    mode: forcedDryRun ? "dry_run" : mustMode(process.env.MODE),
     accountId: String(process.env.ACCOUNT_ID ?? ""),
     pollIntervalSeconds: mustInt(process.env.POLL_INTERVAL_SECONDS, "POLL_INTERVAL_SECONDS", 20),
     maxMarketsScan: mustInt(process.env.MAX_MARKETS_SCAN, "MAX_MARKETS_SCAN", 30),
@@ -106,6 +113,6 @@ export const loadConfigFromEnv = (): AppConfig => {
     }
   };
 
-  if (cfg.mode === "live" && !cfg.accountId) throw new Error("ACCOUNT_ID is required when MODE=live");
+  if (cfg.mode === "live" && !cfg.accountId) throw new Error("ACCOUNT_ID is required when MODE=live and DRY_RUN!=1");
   return cfg;
 };

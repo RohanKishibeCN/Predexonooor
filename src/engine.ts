@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import { AppConfig } from "./config.js";
 import { RateLimiter } from "./limiter.js";
 import { scoreTopOfBook } from "./liquidity.js";
-import { quoteLimitlessMarket, quotePolymarketToken, mid, topDepth } from "./quotes.js";
+import { quoteLimitlessMarket, quotePolymarketToken, mid } from "./quotes.js";
 import { DataClient, TradeClient } from "./predexon.js";
-import { BotState, exposuresByMarket, loadState, saveState, totalExposure } from "./state.js";
+import { applyFillToLedger, exposuresByMarket, loadState, realizedToday, saveState, totalExposure, type BotState, type Fill } from "./state.js";
 import { RiskLimits, canOpenTrade, initialRiskState } from "./risk.js";
 
 type VenueListing = {
@@ -13,6 +13,31 @@ type VenueListing = {
   tokenId?: string;
   marketSlug?: string;
   side?: string;
+};
+
+const todayISO = (): string => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+const toNumber = (v: any): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const parseExecutedFill = (resp: any): { ok: boolean; filledSize: number; avgPrice: number; orderId: string } => {
+  const status = String(resp?.status ?? "");
+  const orderId = String(resp?.orderId ?? "");
+  const filled = toNumber(resp?.filled);
+  const price = toNumber(resp?.price);
+
+  if (!orderId) return { ok: false, filledSize: 0, avgPrice: 0, orderId: "" };
+  if (status !== "filled" && status !== "partial" && status !== "cancelled") return { ok: false, filledSize: 0, avgPrice: 0, orderId };
+  if (filled <= 0 || price <= 0) return { ok: false, filledSize: 0, avgPrice: 0, orderId };
+  return { ok: true, filledSize: filled, avgPrice: price, orderId };
 };
 
 const parseListings = (outcome: any): VenueListing[] => {
@@ -42,7 +67,8 @@ const pickBestLiquidity = async (opts: {
 }): Promise<
   | {
       venue: "polymarket" | "limitless";
-      tokenId: string;
+      tokenId?: string;
+      marketSlug?: string;
       quoteMid: number;
       bestAsk: number;
       bestBid: number;
@@ -59,7 +85,8 @@ const pickBestLiquidity = async (opts: {
     | {
         score: number;
         venue: "polymarket" | "limitless";
-        tokenId: string;
+        tokenId?: string;
+        marketSlug?: string;
         quoteMid: number;
         bestAsk: number;
         bestBid: number;
@@ -73,14 +100,17 @@ const pickBestLiquidity = async (opts: {
     const q = await quoteListing(opts.data, l);
     if (!q) continue;
     const s = scoreTopOfBook(q);
-    const tokenId = l.tokenId;
-    if (!tokenId) continue;
+    const tokenId = q.venue === "polymarket" ? l.tokenId : undefined;
+    const marketSlug = q.venue === "limitless" ? l.marketSlug : undefined;
+    if (q.venue === "polymarket" && !tokenId) continue;
+    if (q.venue === "limitless" && !marketSlug) continue;
     const m = mid(q);
     if (!best || s.score > best.score) {
       best = {
         score: s.score,
         venue: q.venue,
         tokenId,
+        marketSlug,
         quoteMid: m,
         bestAsk: q.bestAsk,
         bestBid: q.bestBid,
@@ -123,10 +153,15 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
   const health = { data: await opts.data.health(), trade: await opts.trade.health() };
   process.stdout.write(JSON.stringify({ health }, null, 2) + "\n");
 
+  const syncRealizedRisk = (): void => {
+    const day = todayISO();
+    if (riskState.dayKey !== day) riskState.dayKey = day;
+    riskState.realizedPnlToday = realizedToday(state, day);
+  };
+
   while (true) {
+    syncRealizedRisk();
     const openPositions = state.positions.filter((p) => p.status === "open");
-    const expByMarket = exposuresByMarket(state);
-    const expTotal = totalExposure(state);
 
     for (const pos of openPositions) {
       let qMid: number | null = null;
@@ -135,6 +170,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
       await limiter.wait();
       if (pos.venue === "polymarket") {
+        if (!pos.tokenId) continue;
         const q = await quotePolymarketToken(opts.data, pos.tokenId);
         if (q) {
           qMid = mid(q);
@@ -145,7 +181,8 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         const outcome = await opts.data.getOutcome(pos.predexonId, true);
         const listing = parseListings(outcome).find((l) => l.venue === "limitless");
         if (listing?.marketSlug) {
-          const q = await quoteLimitlessMarket(opts.data, listing.marketSlug);
+          const side = listing.side === "no" ? "no" : "yes";
+          const q = await quoteLimitlessMarket(opts.data, listing.marketSlug, side);
           if (q) {
             qMid = mid(q);
             bestBid = q.bestBid;
@@ -181,30 +218,73 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
       if (cfg.mode === "live") {
         const clientId = crypto.randomUUID();
-        await opts.trade.placeOrder({
+        const resp = await opts.trade.placeOrder({
           accountId: cfg.accountId,
           venue: pos.venue,
-          tokenId: pos.tokenId,
+          predexonId: pos.predexonId,
           side: "sell",
-          type: "limit",
+          type: "market",
           size: pos.size,
-          price: exitPrice,
           clientId
         });
+        const exec = parseExecutedFill(resp);
+        if (exec.ok) {
+          const fill: Fill = {
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            dayISO: todayISO(),
+            accountId: cfg.accountId,
+            venue: pos.venue,
+            predexonId: pos.predexonId,
+            side: "sell",
+            filledSize: exec.filledSize,
+            avgPrice: exec.avgPrice,
+            orderId: exec.orderId,
+            clientId
+          };
+          applyFillToLedger(state, fill);
+          syncRealizedRisk();
+          if (exec.filledSize + 1e-9 < pos.size) {
+            pos.size -= exec.filledSize;
+            saveState(opts.statePath, state);
+            continue;
+          }
+        }
+      } else {
+        const fill: Fill = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          dayISO: todayISO(),
+          accountId: cfg.accountId || "dry_run",
+          venue: pos.venue,
+          predexonId: pos.predexonId,
+          side: "sell",
+          filledSize: pos.size,
+          avgPrice: exitPrice,
+          orderId: `dryrun:${crypto.randomUUID()}`,
+          clientId: "dryrun"
+        };
+        applyFillToLedger(state, fill);
+        syncRealizedRisk();
       }
 
       pos.status = "closed";
       saveState(opts.statePath, state);
     }
 
-    const openAfter = state.positions.filter((p) => p.status === "open");
+    let openAfter = state.positions.filter((p) => p.status === "open");
     if (openAfter.length < cfg.risk.maxOpenPositions) {
       await limiter.wait();
       const marketsPayload = await opts.data.listPolymarketMarkets({ limit: cfg.maxMarketsScan });
       const candidates = extractMarketCandidates(marketsPayload);
 
       for (const c of candidates) {
+        openAfter = state.positions.filter((p) => p.status === "open");
+        if (openAfter.length >= cfg.risk.maxOpenPositions) break;
         if (openAfter.some((p) => p.predexonId === c.predexonId && p.status === "open")) continue;
+
+        const expByMarket = exposuresByMarket(state);
+        const expTotal = totalExposure(state);
 
         const best = await pickBestLiquidity({
           data: opts.data,
@@ -221,6 +301,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         if (depthShares * best.quoteMid < cfg.liquidity.minTopDepthUsd) continue;
 
         const intendedNotional = Math.min(cfg.risk.maxPerTradeUsd, cfg.risk.maxTotalExposureUsd - expTotal);
+        if (intendedNotional <= 0) continue;
         const marketExp = expByMarket[c.predexonId] ?? 0;
         const gate = canOpenTrade({
           limits,
@@ -232,22 +313,17 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         });
         if (!gate.ok) continue;
 
-        const entryPrice = Math.min(0.999, best.bestAsk * (1 + cfg.execution.slippageGuardPct));
-        const size = Math.max(0.01, intendedNotional / entryPrice);
-        const tp = entryPrice * (1 + cfg.execution.entry.takeProfitPct);
-        const sl = entryPrice * (1 - cfg.execution.entry.stopLossPct);
-        const maxHoldUntil = Date.now() + cfg.execution.entry.maxHoldMinutes * 60_000;
-
         process.stdout.write(
           JSON.stringify(
             {
-              event: "enter_candidate",
+              event: "enter_signal",
               venue: best.venue,
               title: c.title,
               predexonId: c.predexonId,
               spread,
-              entryPrice,
-              size
+              bestBid: best.bestBid,
+              bestAsk: best.bestAsk,
+              intendedNotional
             },
             null,
             2
@@ -256,23 +332,85 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
         if (cfg.mode === "live") {
           const clientId = crypto.randomUUID();
-          await opts.trade.placeOrder({
+          const resp = await opts.trade.placeOrder({
             accountId: cfg.accountId,
             venue: best.venue,
-            tokenId: best.tokenId,
+            predexonId: c.predexonId,
             side: "buy",
-            type: "limit",
-            size,
-            price: entryPrice,
+            type: "market",
+            amount: intendedNotional,
             clientId
           });
+          const exec = parseExecutedFill(resp);
+          if (!exec.ok) {
+            continue;
+          }
+          const entryPrice = exec.avgPrice;
+          const filledSize = exec.filledSize;
+          const tp = entryPrice * (1 + cfg.execution.entry.takeProfitPct);
+          const sl = entryPrice * (1 - cfg.execution.entry.stopLossPct);
+          const maxHoldUntil = Date.now() + cfg.execution.entry.maxHoldMinutes * 60_000;
+
+          const fill: Fill = {
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            dayISO: todayISO(),
+            accountId: cfg.accountId,
+            venue: best.venue,
+            predexonId: c.predexonId,
+            side: "buy",
+            filledSize,
+            avgPrice: entryPrice,
+            orderId: exec.orderId,
+            clientId
+          };
+          applyFillToLedger(state, fill);
+          syncRealizedRisk();
+
+          state.positions.push({
+            id: crypto.randomUUID(),
+            predexonId: c.predexonId,
+            venue: best.venue,
+            tokenId: best.venue === "polymarket" ? best.tokenId : undefined,
+            size: filledSize,
+            entryPrice,
+            entryTs: Date.now(),
+            takeProfit: tp,
+            stopLoss: sl,
+            maxHoldUntil,
+            status: "open"
+          });
+          saveState(opts.statePath, state);
+          continue;
         }
+
+        const entryPrice = Math.min(0.999, best.bestAsk * (1 + cfg.execution.slippageGuardPct));
+        const size = Math.max(0.01, intendedNotional / entryPrice);
+        const tp = entryPrice * (1 + cfg.execution.entry.takeProfitPct);
+        const sl = entryPrice * (1 - cfg.execution.entry.stopLossPct);
+        const maxHoldUntil = Date.now() + cfg.execution.entry.maxHoldMinutes * 60_000;
+
+        const fill: Fill = {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          dayISO: todayISO(),
+          accountId: cfg.accountId || "dry_run",
+          venue: best.venue,
+          predexonId: c.predexonId,
+          side: "buy",
+          filledSize: size,
+          avgPrice: entryPrice,
+          orderId: `dryrun:${crypto.randomUUID()}`,
+          clientId: "dryrun"
+        };
+        applyFillToLedger(state, fill);
+        syncRealizedRisk();
 
         state.positions.push({
           id: crypto.randomUUID(),
           predexonId: c.predexonId,
           venue: best.venue,
-          tokenId: best.tokenId,
+          tokenId: best.venue === "polymarket" ? best.tokenId : undefined,
           size,
           entryPrice,
           entryTs: Date.now(),
@@ -282,8 +420,6 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           status: "open"
         });
         saveState(opts.statePath, state);
-
-        if (state.positions.filter((p) => p.status === "open").length >= cfg.risk.maxOpenPositions) break;
       }
     }
 

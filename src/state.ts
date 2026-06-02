@@ -4,7 +4,7 @@ export type Position = {
   id: string;
   predexonId: string;
   venue: "polymarket" | "limitless";
-  tokenId: string;
+  tokenId?: string;
   size: number;
   entryPrice: number;
   entryTs: number;
@@ -14,15 +14,47 @@ export type Position = {
   status: "open" | "closed";
 };
 
+export type Fill = {
+  id: string;
+  ts: number;
+  dayISO: string;
+  accountId: string;
+  venue: "polymarket" | "limitless";
+  predexonId: string;
+  side: "buy" | "sell";
+  filledSize: number;
+  avgPrice: number;
+  orderId: string;
+  clientId?: string;
+};
+
+export type Lot = {
+  predexonId: string;
+  venue: "polymarket" | "limitless";
+  size: number;
+  price: number;
+};
+
 export type BotState = {
   positions: Position[];
+  fills: Fill[];
+  lots: Lot[];
+  realized: {
+    total: number;
+    byDay: Record<string, number>;
+  };
 };
 
 export const loadState = (path: string): BotState => {
-  if (!fs.existsSync(path)) return { positions: [] };
+  if (!fs.existsSync(path)) return { positions: [], fills: [], lots: [], realized: { total: 0, byDay: {} } };
   const raw = JSON.parse(fs.readFileSync(path, "utf8")) as BotState;
-  if (!raw || typeof raw !== "object") return { positions: [] };
-  return { positions: Array.isArray(raw.positions) ? raw.positions : [] };
+  if (!raw || typeof raw !== "object") return { positions: [], fills: [], lots: [], realized: { total: 0, byDay: {} } };
+  return {
+    positions: Array.isArray(raw.positions) ? raw.positions : [],
+    fills: Array.isArray((raw as any).fills) ? (raw as any).fills : [],
+    lots: Array.isArray((raw as any).lots) ? (raw as any).lots : [],
+    realized: (raw as any).realized && typeof (raw as any).realized === "object" ? (raw as any).realized : { total: 0, byDay: {} }
+  };
 };
 
 export const saveState = (path: string, state: BotState): void => {
@@ -43,3 +75,32 @@ export const exposuresByMarket = (state: BotState): Record<string, number> => {
 export const totalExposure = (state: BotState): number =>
   state.positions.filter((p) => p.status === "open").reduce((acc, p) => acc + p.size * p.entryPrice, 0);
 
+export const realizedToday = (state: BotState, dayISO: string): number => Number(state.realized?.byDay?.[dayISO] ?? 0);
+
+export const applyFillToLedger = (state: BotState, fill: Fill): void => {
+  state.fills.push(fill);
+
+  if (!state.realized) state.realized = { total: 0, byDay: {} };
+  if (!state.realized.byDay) state.realized.byDay = {};
+
+  if (fill.side === "buy") {
+    state.lots.push({ predexonId: fill.predexonId, venue: fill.venue, size: fill.filledSize, price: fill.avgPrice });
+    return;
+  }
+
+  let remaining = fill.filledSize;
+  let realized = 0;
+  const lots = state.lots.filter((l) => l.predexonId === fill.predexonId && l.venue === fill.venue);
+
+  for (const lot of lots) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, lot.size);
+    realized += (fill.avgPrice - lot.price) * take;
+    lot.size -= take;
+    remaining -= take;
+  }
+
+  state.lots = state.lots.filter((l) => l.size > 1e-12);
+  state.realized.total += realized;
+  state.realized.byDay[fill.dayISO] = (state.realized.byDay[fill.dayISO] ?? 0) + realized;
+};
