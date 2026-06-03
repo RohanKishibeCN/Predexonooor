@@ -179,8 +179,19 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
   const state: BotState = loadState(opts.statePath);
 
-  const health = { data: await opts.data.health(), trade: await opts.trade.health() };
-  process.stdout.write(JSON.stringify({ health }, null, 2) + "\n");
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const isAbortError = (e: any) => String(e?.name ?? "") === "AbortError";
+
+  saveState(opts.statePath, state);
+
+  try {
+    const health = { data: await opts.data.health(), trade: await opts.trade.health() };
+    process.stdout.write(JSON.stringify({ health }, null, 2) + "\n");
+  } catch (e: any) {
+    process.stdout.write(
+      JSON.stringify({ event: "health_error", name: String(e?.name ?? ""), message: String(e?.message ?? e) }, null, 2) + "\n"
+    );
+  }
 
   const outcome404Until = new Map<string, number>();
   const outcome404TtlMs = 6 * 60 * 60_000;
@@ -356,8 +367,21 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
     let openAfter = state.positions.filter((p) => p.status === "open");
     if (openAfter.length < cfg.risk.maxOpenPositions) {
-      await limiter.wait();
-      const marketsPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
+      let marketsPayload: any;
+      try {
+        await limiter.wait();
+        marketsPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
+      } catch (e: any) {
+        process.stdout.write(
+          JSON.stringify(
+            { event: "discovery_error", name: String(e?.name ?? ""), message: String(e?.message ?? e), retryable: isAbortError(e) },
+            null,
+            2
+          ) + "\n"
+        );
+        await sleep(isAbortError(e) ? 5_000 : 2_000);
+        continue;
+      }
       const candidates = extractMarketCandidates(marketsPayload);
 
       for (const c of candidates) {
