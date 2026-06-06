@@ -22,6 +22,13 @@
 
 - `POLL_INTERVAL_SECONDS`：主循环间隔（默认 `20`）
 - `MAX_MARKETS_SCAN`：每轮从 Polymarket 拉取 markets 的数量上限（默认 `30`）
+- `REQUEST_INTERVAL_MS`：全局请求节流间隔（默认 `1100`，Free plan 建议不要小于 1100）
+- `OUTCOME_404_TTL_MINUTES`：`/v2/outcomes/{predexon_id}` 返回 404 的负缓存 TTL（默认 `360`）
+
+## 候选过滤
+
+- `MIN_OUTCOME_PRICE`：候选 outcome 最小价格（默认 `0.05`；取值范围 0-1）
+- `MAX_OUTCOME_PRICE`：候选 outcome 最大价格（默认 `0.95`；取值范围 0-1）
 
 ## Venue（本期仅支持 Polymarket + Limitless）
 
@@ -57,3 +64,23 @@
 - `NOTION_VERSION`：Notion-Version header（默认 `2022-06-28`）
 
 配套 Notion 字段建议见 [NOTION_SCHEMA.md](file:///workspace/Predexonooor/docs/NOTION_SCHEMA.md)。
+
+## 参数建议（10u 试水）
+
+如果你只充值 10u，建议先用更保守的风控与更低的请求密度，确认链路稳定后再逐步放开：
+
+- `STARTING_CAPITAL_USD=10`
+- `MAX_PER_TRADE_USD=1`
+- `MAX_EXPOSURE_PER_MARKET_USD=2`
+- `MAX_TOTAL_EXPOSURE_USD=3`
+- `MAX_OPEN_POSITIONS=1`
+- `DAILY_MAX_LOSS_USD=0.5`
+- `MAX_DRAWDOWN_USD=1.5`
+- `ENABLED_VENUES=polymarket`（先单 venue 排障，跑稳再加 limitless）
+- `MAX_SPREAD=0.03`（更宽松可用 `0.05`）
+- `MIN_TOP_DEPTH_USD=5`（更宽松可用 `1`）
+- `MAX_MARKETS_SCAN=5`
+- `POLL_INTERVAL_SECONDS=120`
+- `REQUEST_INTERVAL_MS=1100`
+- `MIN_OUTCOME_PRICE=0.02`
+- `MAX_OUTCOME_PRICE=0.98`
