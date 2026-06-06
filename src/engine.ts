@@ -152,7 +152,10 @@ const pickBestLiquidity = async (opts: {
   return best;
 };
 
-const extractMarketCandidates = (marketsPayload: any): Array<{ title: string; predexonId: string }> => {
+const extractMarketCandidates = (
+  marketsPayload: any,
+  filter: { minOutcomePrice: number; maxOutcomePrice: number }
+): Array<{ title: string; predexonId: string }> => {
   const markets = (marketsPayload?.markets ?? []) as any[];
   const out: Array<{ title: string; predexonId: string }> = [];
   for (const m of markets) {
@@ -163,7 +166,7 @@ const extractMarketCandidates = (marketsPayload: any): Array<{ title: string; pr
       if (!predexonId || price === undefined || price === null) continue;
       const p = Number(price);
       if (!Number.isFinite(p)) continue;
-      if (p <= 0.05 || p >= 0.95) continue;
+      if (p <= filter.minOutcomePrice || p >= filter.maxOutcomePrice) continue;
       out.push({ title: String(m?.title ?? m?.question ?? ""), predexonId: String(predexonId) });
     }
   }
@@ -172,7 +175,7 @@ const extractMarketCandidates = (marketsPayload: any): Array<{ title: string; pr
 
 export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: TradeClient; statePath: string }) => {
   const enabledVenues = new Set(cfg.venues.enabled);
-  const limiter = new RateLimiter(1100);
+  const limiter = new RateLimiter(cfg.requestIntervalMs);
 
   const limits: RiskLimits = { ...cfg.risk };
   const riskState = initialRiskState(limits);
@@ -194,7 +197,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
   }
 
   const outcome404Until = new Map<string, number>();
-  const outcome404TtlMs = 6 * 60 * 60_000;
+  const outcome404TtlMs = Math.max(0, cfg.outcome404TtlMinutes) * 60_000;
   let outcome404Count = 0;
   let lastOutcome404LogAt = 0;
 
@@ -382,7 +385,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         await sleep(isAbortError(e) ? 5_000 : 2_000);
         continue;
       }
-      const candidates = extractMarketCandidates(marketsPayload);
+      const candidates = extractMarketCandidates(marketsPayload, cfg.candidate);
 
       for (const c of candidates) {
         openAfter = state.positions.filter((p) => p.status === "open");

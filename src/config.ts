@@ -5,6 +5,12 @@ export type AppConfig = {
   accountId: string;
   pollIntervalSeconds: number;
   maxMarketsScan: number;
+  requestIntervalMs: number;
+  outcome404TtlMinutes: number;
+  candidate: {
+    minOutcomePrice: number;
+    maxOutcomePrice: number;
+  };
   venues: {
     enabled: Array<"polymarket" | "limitless">;
     preferOrder: Array<"polymarket" | "limitless">;
@@ -86,6 +92,12 @@ export const loadConfigFromEnv = (): AppConfig => {
     accountId: String(process.env.ACCOUNT_ID ?? ""),
     pollIntervalSeconds: mustInt(process.env.POLL_INTERVAL_SECONDS, "POLL_INTERVAL_SECONDS", 20),
     maxMarketsScan: mustInt(process.env.MAX_MARKETS_SCAN, "MAX_MARKETS_SCAN", 30),
+    requestIntervalMs: mustInt(process.env.REQUEST_INTERVAL_MS, "REQUEST_INTERVAL_MS", 1100),
+    outcome404TtlMinutes: mustInt(process.env.OUTCOME_404_TTL_MINUTES, "OUTCOME_404_TTL_MINUTES", 360),
+    candidate: {
+      minOutcomePrice: mustNumber(process.env.MIN_OUTCOME_PRICE, "MIN_OUTCOME_PRICE", 0.05),
+      maxOutcomePrice: mustNumber(process.env.MAX_OUTCOME_PRICE, "MAX_OUTCOME_PRICE", 0.95)
+    },
     venues: {
       enabled: mustVenueList(process.env.ENABLED_VENUES, ["polymarket", "limitless"]),
       preferOrder: mustVenueList(process.env.VENUE_PREFER_ORDER, ["polymarket", "limitless"])
@@ -112,6 +124,12 @@ export const loadConfigFromEnv = (): AppConfig => {
       slippageGuardPct: mustNumber(process.env.SLIPPAGE_GUARD_PCT, "SLIPPAGE_GUARD_PCT", 0.008)
     }
   };
+
+  if (!(cfg.candidate.minOutcomePrice >= 0 && cfg.candidate.minOutcomePrice <= 1))
+    throw new Error("MIN_OUTCOME_PRICE must be between 0 and 1");
+  if (!(cfg.candidate.maxOutcomePrice >= 0 && cfg.candidate.maxOutcomePrice <= 1))
+    throw new Error("MAX_OUTCOME_PRICE must be between 0 and 1");
+  if (cfg.candidate.minOutcomePrice >= cfg.candidate.maxOutcomePrice) throw new Error("MIN_OUTCOME_PRICE must be < MAX_OUTCOME_PRICE");
 
   if (cfg.mode === "live" && !cfg.accountId) throw new Error("ACCOUNT_ID is required when MODE=live and DRY_RUN!=1");
   return cfg;
