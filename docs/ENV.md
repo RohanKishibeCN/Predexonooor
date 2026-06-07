@@ -58,6 +58,7 @@
 - `STOP_LOSS_PCT`（默认 `0.015`）
 - `MAX_HOLD_MINUTES`（默认 `60`）
 - `SLIPPAGE_GUARD_PCT`（默认 `0.008`）
+- `REENTRY_COOLDOWN_SECONDS`：同一 `predexonId` 平仓后重新允许开仓的冷却期（秒；默认 `0`）
 
 ## Notion 日报（可选）
 

@@ -234,6 +234,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       candidatesMissingTokenId: 0,
       skippedOutcome404: 0,
       bestNull: 0,
+      rejectCooldown: 0,
       rejectSpread: 0,
       rejectDepth: 0,
       rejectRisk: 0,
@@ -384,6 +385,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       }
 
       pos.status = "closed";
+      state.lastExitTsByPredexonId[pos.predexonId] = Date.now();
       saveState(opts.statePath, state);
     }
 
@@ -411,6 +413,15 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         openAfter = state.positions.filter((p) => p.status === "open");
         if (openAfter.length >= cfg.risk.maxOpenPositions) break;
         if (openAfter.some((p) => p.predexonId === c.predexonId && p.status === "open")) continue;
+
+        const reentryCooldownMs = Math.max(0, cfg.execution.reentryCooldownSeconds) * 1000;
+        if (reentryCooldownMs > 0) {
+          const lastExitTs = state.lastExitTsByPredexonId[c.predexonId];
+          if (lastExitTs && Date.now() - lastExitTs < reentryCooldownMs) {
+            tickStats.rejectCooldown += 1;
+            continue;
+          }
+        }
 
         const expByMarket = exposuresByMarket(state);
         const expTotal = totalExposure(state);
@@ -631,6 +642,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           maxOutcomePrice: cfg.candidate.maxOutcomePrice,
           maxSpread: cfg.liquidity.maxSpread,
           minTopDepthUsd: cfg.liquidity.minTopDepthUsd,
+          reentryCooldownSeconds: cfg.execution.reentryCooldownSeconds,
           ...tickStats,
           tickMs: Date.now() - tickStartedAt
         },

@@ -39,6 +39,7 @@ export type BotState = {
   positions: Position[];
   fills: Fill[];
   lots: Lot[];
+  lastExitTsByPredexonId: Record<string, number>;
   realized: {
     total: number;
     byDay: Record<string, number>;
@@ -46,13 +47,19 @@ export type BotState = {
 };
 
 export const loadState = (path: string): BotState => {
-  if (!fs.existsSync(path)) return { positions: [], fills: [], lots: [], realized: { total: 0, byDay: {} } };
+  if (!fs.existsSync(path))
+    return { positions: [], fills: [], lots: [], lastExitTsByPredexonId: {}, realized: { total: 0, byDay: {} } };
   const raw = JSON.parse(fs.readFileSync(path, "utf8")) as BotState;
-  if (!raw || typeof raw !== "object") return { positions: [], fills: [], lots: [], realized: { total: 0, byDay: {} } };
+  if (!raw || typeof raw !== "object")
+    return { positions: [], fills: [], lots: [], lastExitTsByPredexonId: {}, realized: { total: 0, byDay: {} } };
   return {
     positions: Array.isArray(raw.positions) ? raw.positions : [],
     fills: Array.isArray((raw as any).fills) ? (raw as any).fills : [],
     lots: Array.isArray((raw as any).lots) ? (raw as any).lots : [],
+    lastExitTsByPredexonId:
+      (raw as any).lastExitTsByPredexonId && typeof (raw as any).lastExitTsByPredexonId === "object"
+        ? (raw as any).lastExitTsByPredexonId
+        : {},
     realized: (raw as any).realized && typeof (raw as any).realized === "object" ? (raw as any).realized : { total: 0, byDay: {} }
   };
 };
