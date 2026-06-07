@@ -97,6 +97,23 @@ const main = async () => {
       if (!accountId) throw new Error("ACCOUNT_ID is required (or pass --account-id)");
 
       const mode = toBool(process.env.DRY_RUN) ? "dry_run" : String(process.env.MODE ?? "live");
+      const venuesEnabled = String(process.env.ENABLED_VENUES ?? "polymarket,limitless")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const polymarketOnly = venuesEnabled.length === 1 && venuesEnabled[0] === "polymarket";
+
+      const tick = (state.lastTickDayISO === dateISO ? state.lastTickSummary : undefined) as any;
+      const candidatesCanonical = typeof tick?.candidatesCanonical === "number" ? tick.candidatesCanonical : undefined;
+      const dualVenueCandidates = typeof tick?.candidates === "number" ? tick.candidates : undefined;
+      const rejectMissingVenueListing = typeof tick?.rejectMissingVenueListing === "number" ? tick.rejectMissingVenueListing : undefined;
+      const dualVenueEntered = typeof tick?.entered === "number" ? tick.entered : undefined;
+      const bestNull = typeof tick?.bestNull === "number" ? tick.bestNull : undefined;
+      const skippedOutcome404 = typeof tick?.skippedOutcome404 === "number" ? tick.skippedOutcome404 : undefined;
+      const dualVenueCoveragePct =
+        candidatesCanonical && dualVenueCandidates !== undefined ? (dualVenueCandidates / candidatesCanonical) * 100 : undefined;
+      const dualVenueHealthy = !polymarketOnly && (dualVenueCandidates ?? 0) > 0;
+      const lastTickAtISO = typeof state.lastTickAt === "number" ? new Date(state.lastTickAt).toISOString() : undefined;
       const realizedTodayUsd = realizedToday(state, dateISO);
       const realizedTotalUsd = Number(state.realized?.total ?? 0);
       const tradesToday = state.fills.filter((f) => f.dayISO === dateISO && f.accountId === accountId).length;
@@ -109,6 +126,17 @@ const main = async () => {
         accountId,
         mode,
         realizedPnlToday: realizedTodayUsd,
+        venuesEnabled,
+        polymarketOnly,
+        dualVenueHealthy,
+        dualVenueCoveragePct,
+        candidatesCanonical,
+        dualVenueCandidates,
+        rejectMissingVenueListing,
+        dualVenueEntered,
+        bestNull,
+        skippedOutcome404,
+        lastTickAtISO,
         realizedPnlTotal: realizedTotalUsd,
         tradesToday,
         openPositions,
@@ -116,6 +144,7 @@ const main = async () => {
       });
       process.stdout.write(JSON.stringify({ ok: true, ...res }, null, 2) + "\n");
     });
+
 
   await program.parseAsync(process.argv);
 };
