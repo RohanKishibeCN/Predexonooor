@@ -42,23 +42,64 @@ const parseJsonSafe = async (res: Response): Promise<any> => {
   }
 };
 
-const request = async (url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<any> => {
-  const timeoutMs = init.timeoutMs ?? 20_000;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal, headers: withApiKey(url, init.headers) });
-    if (res.ok) return await res.json();
-    const payload = await parseJsonSafe(res);
-    throw new PredexonApiError({
-      statusCode: res.status,
-      errorCode: payload?.error,
-      message: payload?.message,
-      requestId: payload?.requestId ?? res.headers.get("x-request-id") ?? undefined
-    });
-  } finally {
-    clearTimeout(t);
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+const toInt = (v: unknown, fallback: number): number => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+};
+
+const retryAfterMs = (res: Response): number | null => {
+  const v = res.headers.get("retry-after");
+  if (!v) return null;
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n * 1000;
+  const t = Date.parse(v);
+  if (Number.isFinite(t)) {
+    const delta = t - Date.now();
+    return delta > 0 ? delta : null;
   }
+  return null;
+};
+
+const request = async (url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<any> => {
+  const maxRetries = toInt(process.env.REQUEST_MAX_RETRIES, 3);
+  const timeoutMs = init.timeoutMs ?? toInt(process.env.REQUEST_TIMEOUT_MS, 20_000);
+
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal, headers: withApiKey(url, init.headers) });
+      if (res.ok) return await res.json();
+
+      if (attempt < maxRetries && (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504)) {
+        const ra = retryAfterMs(res);
+        const backoffMs = ra ?? Math.min(30_000, 1_000 * Math.pow(2, attempt));
+        await sleep(backoffMs);
+        continue;
+      }
+
+      const payload = await parseJsonSafe(res);
+      throw new PredexonApiError({
+        statusCode: res.status,
+        errorCode: payload?.error,
+        message: payload?.message,
+        requestId: payload?.requestId ?? res.headers.get("x-request-id") ?? undefined
+      });
+    } catch (e: any) {
+      if (String(e?.name ?? "") === "AbortError" && attempt < maxRetries) {
+        const backoffMs = Math.min(30_000, 1_000 * Math.pow(2, attempt));
+        await sleep(backoffMs);
+        continue;
+      }
+      throw e;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  throw new Error("unreachable");
 };
 
 export class DataClient {

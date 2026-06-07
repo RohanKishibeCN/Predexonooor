@@ -227,6 +227,18 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
   while (true) {
     syncRealizedRisk();
     const openPositions = state.positions.filter((p) => p.status === "open");
+    const tickStartedAt = Date.now();
+    const tickStats: Record<string, any> = {
+      openPositions: openPositions.length,
+      candidates: 0,
+      candidatesMissingTokenId: 0,
+      skippedOutcome404: 0,
+      bestNull: 0,
+      rejectSpread: 0,
+      rejectDepth: 0,
+      rejectRisk: 0,
+      entered: 0
+    };
 
     for (const pos of openPositions) {
       let qMid: number | null = null;
@@ -393,6 +405,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         continue;
       }
       const candidates = extractMarketCandidates(marketsPayload, cfg.candidate);
+      tickStats.candidates = candidates.length;
 
       for (const c of candidates) {
         openAfter = state.positions.filter((p) => p.status === "open");
@@ -404,7 +417,10 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
         if (!polymarketOnly) {
           const blockedUntil = outcome404Until.get(c.predexonId);
-          if (blockedUntil && blockedUntil > Date.now()) continue;
+          if (blockedUntil && blockedUntil > Date.now()) {
+            tickStats.skippedOutcome404 += 1;
+            continue;
+          }
         }
 
         let best:
@@ -421,7 +437,10 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           | null = null;
 
         if (polymarketOnly) {
-          if (!c.tokenId) continue;
+          if (!c.tokenId) {
+            tickStats.candidatesMissingTokenId += 1;
+            continue;
+          }
           await limiter.wait();
           let q: any = null;
           try {
@@ -455,13 +474,22 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             onOutcome404
           });
         }
-        if (!best) continue;
+        if (!best) {
+          tickStats.bestNull += 1;
+          continue;
+        }
 
         const spread = best.bestAsk - best.bestBid;
-        if (spread > cfg.liquidity.maxSpread) continue;
+        if (spread > cfg.liquidity.maxSpread) {
+          tickStats.rejectSpread += 1;
+          continue;
+        }
 
         const depthShares = Math.min(best.bidSize, best.askSize);
-        if (depthShares * best.quoteMid < cfg.liquidity.minTopDepthUsd) continue;
+        if (depthShares * best.quoteMid < cfg.liquidity.minTopDepthUsd) {
+          tickStats.rejectDepth += 1;
+          continue;
+        }
 
         const intendedNotional = Math.min(cfg.risk.maxPerTradeUsd, cfg.risk.maxTotalExposureUsd - expTotal);
         if (intendedNotional <= 0) continue;
@@ -474,7 +502,10 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           marketExposure: marketExp,
           intendedNotional
         });
-        if (!gate.ok) continue;
+        if (!gate.ok) {
+          tickStats.rejectRisk += 1;
+          continue;
+        }
 
         process.stdout.write(
           JSON.stringify(
@@ -492,6 +523,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             2
           ) + "\n"
         );
+        tickStats.entered += 1;
 
         if (cfg.mode === "live") {
           const clientId = crypto.randomUUID();
@@ -586,6 +618,26 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         saveState(opts.statePath, state);
       }
     }
+
+    process.stdout.write(
+      JSON.stringify(
+        {
+          event: "tick_summary",
+          polymarketOnly,
+          pollIntervalSeconds: cfg.pollIntervalSeconds,
+          maxMarketsScan: cfg.maxMarketsScan,
+          requestIntervalMs: cfg.requestIntervalMs,
+          minOutcomePrice: cfg.candidate.minOutcomePrice,
+          maxOutcomePrice: cfg.candidate.maxOutcomePrice,
+          maxSpread: cfg.liquidity.maxSpread,
+          minTopDepthUsd: cfg.liquidity.minTopDepthUsd,
+          ...tickStats,
+          tickMs: Date.now() - tickStartedAt
+        },
+        null,
+        2
+      ) + "\n"
+    );
 
     await new Promise((r) => setTimeout(r, cfg.pollIntervalSeconds * 1000));
   }

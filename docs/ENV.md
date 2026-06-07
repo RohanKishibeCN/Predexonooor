@@ -23,6 +23,8 @@
 - `POLL_INTERVAL_SECONDS`：主循环间隔（默认 `20`）
 - `MAX_MARKETS_SCAN`：每轮从 Polymarket 拉取 markets 的数量上限（默认 `30`）
 - `REQUEST_INTERVAL_MS`：全局请求节流间隔（默认 `1100`，Free plan 建议不要小于 1100）
+- `REQUEST_TIMEOUT_MS`：单次 HTTP 请求超时（毫秒；默认 `20000`）
+- `REQUEST_MAX_RETRIES`：对 429/5xx/超时的重试次数（默认 `3`）
 - `OUTCOME_404_TTL_MINUTES`：`/v2/outcomes/{predexon_id}` 返回 404 的负缓存 TTL（默认 `360`）
 
 ## 候选过滤
