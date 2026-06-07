@@ -109,6 +109,20 @@ export class DataClient {
     return this.listDiscoveryMarkets({ limit: 1 });
   }
 
+  listCanonicalListings(params: {
+    status?: string;
+    limit?: number;
+    routableOnly?: boolean;
+    venue?: string;
+  }): Promise<any> {
+    const u = new URL(`${this.baseUrl}/v2/markets/listings`);
+    u.searchParams.set("status", params.status ?? "open");
+    u.searchParams.set("limit", String(params.limit ?? 50));
+    u.searchParams.set("routable_only", String(params.routableOnly ?? true));
+    if (params.venue) u.searchParams.set("venue", params.venue);
+    return request(u.toString());
+  }
+
   async listDiscoveryMarkets(params: {
     status?: string;
     sort?: string;
