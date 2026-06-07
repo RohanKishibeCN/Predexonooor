@@ -789,26 +789,27 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       }
     }
 
-    process.stdout.write(
-      JSON.stringify(
-        {
-          event: "tick_summary",
-          polymarketOnly,
-          pollIntervalSeconds: cfg.pollIntervalSeconds,
-          maxMarketsScan: cfg.maxMarketsScan,
-          requestIntervalMs: cfg.requestIntervalMs,
-          minOutcomePrice: cfg.candidate.minOutcomePrice,
-          maxOutcomePrice: cfg.candidate.maxOutcomePrice,
-          maxSpread: cfg.liquidity.maxSpread,
-          minTopDepthUsd: cfg.liquidity.minTopDepthUsd,
-          reentryCooldownSeconds: cfg.execution.reentryCooldownSeconds,
-          ...tickStats,
-          tickMs: Date.now() - tickStartedAt
-        },
-        null,
-        2
-      ) + "\n"
-    );
+    const tickSummary = {
+      event: "tick_summary",
+      polymarketOnly,
+      pollIntervalSeconds: cfg.pollIntervalSeconds,
+      maxMarketsScan: cfg.maxMarketsScan,
+      requestIntervalMs: cfg.requestIntervalMs,
+      minOutcomePrice: cfg.candidate.minOutcomePrice,
+      maxOutcomePrice: cfg.candidate.maxOutcomePrice,
+      maxSpread: cfg.liquidity.maxSpread,
+      minTopDepthUsd: cfg.liquidity.minTopDepthUsd,
+      reentryCooldownSeconds: cfg.execution.reentryCooldownSeconds,
+      ...tickStats,
+      tickMs: Date.now() - tickStartedAt
+    };
+
+    process.stdout.write(JSON.stringify(tickSummary, null, 2) + "\n");
+    state.lastTickAt = Date.now();
+    state.lastTickDayISO = todayISO();
+    state.lastTickVenuesEnabled = Array.from(enabledVenues);
+    state.lastTickSummary = tickSummary as any;
+    saveState(opts.statePath, state);
 
     await new Promise((r) => setTimeout(r, cfg.pollIntervalSeconds * 1000));
   }

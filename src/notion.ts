@@ -91,6 +91,17 @@ export class NotionClient {
     dateISO: string;
     accountId: string;
     mode?: string;
+    venuesEnabled?: string[];
+    polymarketOnly?: boolean;
+    dualVenueHealthy?: boolean;
+    dualVenueCoveragePct?: number;
+    candidatesCanonical?: number;
+    dualVenueCandidates?: number;
+    rejectMissingVenueListing?: number;
+    dualVenueEntered?: number;
+    bestNull?: number;
+    skippedOutcome404?: number;
+    lastTickAtISO?: string;
     realizedPnlToday?: number;
     realizedPnlTotal?: number;
     tradesToday?: number;
@@ -110,6 +121,19 @@ export class NotionClient {
     setIfExists(db, "Account ID", { rich_text: [{ type: "text", text: { content: input.accountId } }] });
 
     if (input.mode !== undefined) setIfExists(db, "Mode", { select: { name: input.mode } });
+    if (input.venuesEnabled !== undefined)
+      setIfExists(db, "Venues Enabled", { multi_select: input.venuesEnabled.map((v) => ({ name: v })) });
+    if (input.polymarketOnly !== undefined) setIfExists(db, "Polymarket Only", { checkbox: input.polymarketOnly });
+    if (input.dualVenueHealthy !== undefined) setIfExists(db, "Dual-Venue Healthy", { checkbox: input.dualVenueHealthy });
+    if (input.dualVenueCoveragePct !== undefined) setIfExists(db, "Dual-Venue Coverage %", { number: input.dualVenueCoveragePct });
+    if (input.candidatesCanonical !== undefined) setIfExists(db, "Candidates Canonical", { number: input.candidatesCanonical });
+    if (input.dualVenueCandidates !== undefined) setIfExists(db, "Dual-Venue Candidates", { number: input.dualVenueCandidates });
+    if (input.rejectMissingVenueListing !== undefined)
+      setIfExists(db, "Reject Missing Listing", { number: input.rejectMissingVenueListing });
+    if (input.dualVenueEntered !== undefined) setIfExists(db, "Dual-Venue Entered", { number: input.dualVenueEntered });
+    if (input.bestNull !== undefined) setIfExists(db, "Best Null", { number: input.bestNull });
+    if (input.skippedOutcome404 !== undefined) setIfExists(db, "Skip Outcome 404", { number: input.skippedOutcome404 });
+    if (input.lastTickAtISO !== undefined) setIfExists(db, "Last Tick At", { date: { start: input.lastTickAtISO } });
     if (input.realizedPnlToday !== undefined) setIfExists(db, "Realized PnL Today", { number: input.realizedPnlToday });
     if (input.realizedPnlTotal !== undefined) setIfExists(db, "Realized PnL Total", { number: input.realizedPnlTotal });
     if (input.tradesToday !== undefined) setIfExists(db, "Trades Today", { number: input.tradesToday });
@@ -124,6 +148,17 @@ export class NotionClient {
     dateISO: string;
     accountId: string;
     mode?: string;
+    venuesEnabled?: string[];
+    polymarketOnly?: boolean;
+    dualVenueHealthy?: boolean;
+    dualVenueCoveragePct?: number;
+    candidatesCanonical?: number;
+    dualVenueCandidates?: number;
+    rejectMissingVenueListing?: number;
+    dualVenueEntered?: number;
+    bestNull?: number;
+    skippedOutcome404?: number;
+    lastTickAtISO?: string;
     realizedPnlToday?: number;
     realizedPnlTotal?: number;
     tradesToday?: number;
@@ -156,4 +191,3 @@ export class NotionClient {
     return { pageId: String(created?.id ?? ""), created: true };
   }
 }
-

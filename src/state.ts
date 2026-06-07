@@ -40,6 +40,10 @@ export type BotState = {
   fills: Fill[];
   lots: Lot[];
   lastExitTsByPredexonId: Record<string, number>;
+  lastTickAt?: number;
+  lastTickDayISO?: string;
+  lastTickVenuesEnabled?: string[];
+  lastTickSummary?: Record<string, any>;
   realized: {
     total: number;
     byDay: Record<string, number>;
@@ -48,10 +52,30 @@ export type BotState = {
 
 export const loadState = (path: string): BotState => {
   if (!fs.existsSync(path))
-    return { positions: [], fills: [], lots: [], lastExitTsByPredexonId: {}, realized: { total: 0, byDay: {} } };
+    return {
+      positions: [],
+      fills: [],
+      lots: [],
+      lastExitTsByPredexonId: {},
+      lastTickAt: undefined,
+      lastTickDayISO: undefined,
+      lastTickVenuesEnabled: undefined,
+      lastTickSummary: undefined,
+      realized: { total: 0, byDay: {} }
+    };
   const raw = JSON.parse(fs.readFileSync(path, "utf8")) as BotState;
   if (!raw || typeof raw !== "object")
-    return { positions: [], fills: [], lots: [], lastExitTsByPredexonId: {}, realized: { total: 0, byDay: {} } };
+    return {
+      positions: [],
+      fills: [],
+      lots: [],
+      lastExitTsByPredexonId: {},
+      lastTickAt: undefined,
+      lastTickDayISO: undefined,
+      lastTickVenuesEnabled: undefined,
+      lastTickSummary: undefined,
+      realized: { total: 0, byDay: {} }
+    };
   return {
     positions: Array.isArray(raw.positions) ? raw.positions : [],
     fills: Array.isArray((raw as any).fills) ? (raw as any).fills : [],
@@ -60,6 +84,10 @@ export const loadState = (path: string): BotState => {
       (raw as any).lastExitTsByPredexonId && typeof (raw as any).lastExitTsByPredexonId === "object"
         ? (raw as any).lastExitTsByPredexonId
         : {},
+    lastTickAt: typeof (raw as any).lastTickAt === "number" ? (raw as any).lastTickAt : undefined,
+    lastTickDayISO: typeof (raw as any).lastTickDayISO === "string" ? (raw as any).lastTickDayISO : undefined,
+    lastTickVenuesEnabled: Array.isArray((raw as any).lastTickVenuesEnabled) ? (raw as any).lastTickVenuesEnabled : undefined,
+    lastTickSummary: (raw as any).lastTickSummary && typeof (raw as any).lastTickSummary === "object" ? (raw as any).lastTickSummary : undefined,
     realized: (raw as any).realized && typeof (raw as any).realized === "object" ? (raw as any).realized : { total: 0, byDay: {} }
   };
 };
