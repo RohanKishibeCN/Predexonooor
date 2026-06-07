@@ -155,19 +155,24 @@ const pickBestLiquidity = async (opts: {
 const extractMarketCandidates = (
   marketsPayload: any,
   filter: { minOutcomePrice: number; maxOutcomePrice: number }
-): Array<{ title: string; predexonId: string }> => {
+): Array<{ title: string; predexonId: string; tokenId?: string }> => {
   const markets = (marketsPayload?.markets ?? []) as any[];
-  const out: Array<{ title: string; predexonId: string }> = [];
+  const out: Array<{ title: string; predexonId: string; tokenId?: string }> = [];
   for (const m of markets) {
     const outcomes = (m?.outcomes ?? []) as any[];
     for (const o of outcomes) {
       const predexonId = o?.predexon_id ?? o?.predexonId;
+      const tokenId = o?.token_id ?? o?.tokenId;
       const price = o?.price;
       if (!predexonId || price === undefined || price === null) continue;
       const p = Number(price);
       if (!Number.isFinite(p)) continue;
       if (p <= filter.minOutcomePrice || p >= filter.maxOutcomePrice) continue;
-      out.push({ title: String(m?.title ?? m?.question ?? ""), predexonId: String(predexonId) });
+      out.push({
+        title: String(m?.title ?? m?.question ?? ""),
+        predexonId: String(predexonId),
+        tokenId: tokenId ? String(tokenId) : undefined
+      });
     }
   }
   return out;
@@ -175,6 +180,7 @@ const extractMarketCandidates = (
 
 export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: TradeClient; statePath: string }) => {
   const enabledVenues = new Set(cfg.venues.enabled);
+  const polymarketOnly = enabledVenues.size === 1 && enabledVenues.has("polymarket");
   const limiter = new RateLimiter(cfg.requestIntervalMs);
 
   const limits: RiskLimits = { ...cfg.risk };
@@ -317,7 +323,8 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         const resp = await opts.trade.placeOrder({
           accountId: cfg.accountId,
           venue: pos.venue,
-          predexonId: pos.predexonId,
+          predexonId: pos.venue === "polymarket" ? undefined : pos.predexonId,
+          market: pos.venue === "polymarket" ? { tokenId: pos.tokenId } : undefined,
           side: "sell",
           type: "market",
           size: pos.size,
@@ -395,16 +402,59 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         const expByMarket = exposuresByMarket(state);
         const expTotal = totalExposure(state);
 
-        const blockedUntil = outcome404Until.get(c.predexonId);
-        if (blockedUntil && blockedUntil > Date.now()) continue;
+        if (!polymarketOnly) {
+          const blockedUntil = outcome404Until.get(c.predexonId);
+          if (blockedUntil && blockedUntil > Date.now()) continue;
+        }
 
-        const best = await pickBestLiquidity({
-          data: opts.data,
-          predexonId: c.predexonId,
-          enabledVenues,
-          limiter,
-          onOutcome404
-        });
+        let best:
+          | {
+              venue: "polymarket" | "limitless";
+              tokenId?: string;
+              marketSlug?: string;
+              quoteMid: number;
+              bestAsk: number;
+              bestBid: number;
+              bidSize: number;
+              askSize: number;
+            }
+          | null = null;
+
+        if (polymarketOnly) {
+          if (!c.tokenId) continue;
+          await limiter.wait();
+          let q: any = null;
+          try {
+            q = await quotePolymarketToken(opts.data, c.tokenId);
+          } catch (e: any) {
+            process.stdout.write(
+              JSON.stringify(
+                { event: "quote_error", predexonId: c.predexonId, venue: "polymarket", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                null,
+                2
+              ) + "\n"
+            );
+            continue;
+          }
+          if (!q) continue;
+          best = {
+            venue: "polymarket",
+            tokenId: c.tokenId,
+            quoteMid: mid(q),
+            bestAsk: q.bestAsk,
+            bestBid: q.bestBid,
+            bidSize: q.bidSize,
+            askSize: q.askSize
+          };
+        } else {
+          best = await pickBestLiquidity({
+            data: opts.data,
+            predexonId: c.predexonId,
+            enabledVenues,
+            limiter,
+            onOutcome404
+          });
+        }
         if (!best) continue;
 
         const spread = best.bestAsk - best.bestBid;
@@ -448,7 +498,8 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           const resp = await opts.trade.placeOrder({
             accountId: cfg.accountId,
             venue: best.venue,
-            predexonId: c.predexonId,
+            predexonId: best.venue === "polymarket" ? undefined : c.predexonId,
+            market: best.venue === "polymarket" ? { tokenId: best.tokenId } : undefined,
             side: "buy",
             type: "market",
             amount: intendedNotional,
