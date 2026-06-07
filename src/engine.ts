@@ -15,6 +15,13 @@ type VenueListing = {
   side?: string;
 };
 
+type MarketCandidate = {
+  title: string;
+  predexonId: string;
+  tokenId?: string;
+  listings?: VenueListing[];
+};
+
 const todayISO = (): string => {
   const d = new Date();
   const y = d.getFullYear();
@@ -152,12 +159,91 @@ const pickBestLiquidity = async (opts: {
   return best;
 };
 
+const pickBestLiquidityFromListings = async (opts: {
+  data: DataClient;
+  predexonId: string;
+  listings: VenueListing[];
+  enabledVenues: Set<string>;
+  limiter: RateLimiter;
+  filter: { minOutcomePrice: number; maxOutcomePrice: number };
+}): Promise<
+  | {
+      venue: "polymarket" | "limitless";
+      tokenId?: string;
+      marketSlug?: string;
+      quoteMid: number;
+      bestAsk: number;
+      bestBid: number;
+      bidSize: number;
+      askSize: number;
+    }
+  | null
+> => {
+  let best:
+    | {
+        score: number;
+        venue: "polymarket" | "limitless";
+        tokenId?: string;
+        marketSlug?: string;
+        quoteMid: number;
+        bestAsk: number;
+        bestBid: number;
+        bidSize: number;
+        askSize: number;
+      }
+    | null = null;
+
+  for (const l of opts.listings) {
+    if (!opts.enabledVenues.has(l.venue)) continue;
+    if (l.venue === "polymarket" && !l.tokenId) continue;
+    if (l.venue === "limitless" && !l.marketSlug) continue;
+
+    await opts.limiter.wait();
+    let q: any = null;
+    try {
+      q = await quoteListing(opts.data, l);
+    } catch (e: any) {
+      process.stdout.write(
+        JSON.stringify(
+          { event: "quote_error", predexonId: opts.predexonId, venue: l.venue, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+          null,
+          2
+        ) + "\n"
+      );
+      continue;
+    }
+    if (!q) continue;
+    const m = mid(q);
+    if (m <= opts.filter.minOutcomePrice || m >= opts.filter.maxOutcomePrice) continue;
+    const s = scoreTopOfBook(q);
+    const tokenId = q.venue === "polymarket" ? l.tokenId : undefined;
+    const marketSlug = q.venue === "limitless" ? l.marketSlug : undefined;
+    if (q.venue === "polymarket" && !tokenId) continue;
+    if (q.venue === "limitless" && !marketSlug) continue;
+    if (!best || s.score > best.score) {
+      best = {
+        score: s.score,
+        venue: q.venue,
+        tokenId,
+        marketSlug,
+        quoteMid: m,
+        bestAsk: q.bestAsk,
+        bestBid: q.bestBid,
+        bidSize: q.bidSize,
+        askSize: q.askSize
+      };
+    }
+  }
+
+  return best;
+};
+
 const extractMarketCandidates = (
   marketsPayload: any,
   filter: { minOutcomePrice: number; maxOutcomePrice: number }
-): Array<{ title: string; predexonId: string; tokenId?: string }> => {
+): MarketCandidate[] => {
   const markets = (marketsPayload?.markets ?? []) as any[];
-  const out: Array<{ title: string; predexonId: string; tokenId?: string }> = [];
+  const out: MarketCandidate[] = [];
   for (const m of markets) {
     const outcomes = (m?.outcomes ?? []) as any[];
     for (const o of outcomes) {
@@ -176,6 +262,68 @@ const extractMarketCandidates = (
     }
   }
   return out;
+};
+
+const extractCanonicalListingCandidates = (opts: {
+  listingsPayload: any;
+  enabledVenues: Set<string>;
+}): { candidates: MarketCandidate[]; candidatesCanonical: number; rejectMissingVenueListing: number; candidatesMissingExecutionId: number } => {
+  const listings = (opts.listingsPayload?.listings ?? []) as any[];
+  const byPredexonId = new Map<string, { title: string; byVenue: Map<string, VenueListing> }>();
+
+  for (const l of listings) {
+    const predexonId = l?.predexon_id ?? l?.predexonId;
+    const venue = String(l?.venue ?? "");
+    if (!predexonId || !venue) continue;
+    if (!opts.enabledVenues.has(venue)) continue;
+    const title = String(l?.market_title ?? l?.marketTitle ?? l?.venue_market_title ?? l?.venueMarketTitle ?? "");
+    const tokenId = l?.token_id ?? l?.tokenId;
+    const marketSlug = l?.market_slug ?? l?.marketSlug;
+    const side = l?.side ?? undefined;
+
+    const cur = byPredexonId.get(String(predexonId)) ?? { title, byVenue: new Map<string, VenueListing>() };
+    if (!cur.title && title) cur.title = title;
+    cur.byVenue.set(venue, {
+      venue,
+      tokenId: tokenId ? String(tokenId) : undefined,
+      marketSlug: marketSlug ? String(marketSlug) : undefined,
+      side: side ? String(side) : undefined
+    });
+    byPredexonId.set(String(predexonId), cur);
+  }
+
+  const candidatesCanonical = byPredexonId.size;
+  let rejectMissingVenueListing = 0;
+  let candidatesMissingExecutionId = 0;
+  const candidates: MarketCandidate[] = [];
+
+  for (const [predexonId, g] of byPredexonId.entries()) {
+    let ok = true;
+    const groupListings: VenueListing[] = [];
+    for (const v of opts.enabledVenues) {
+      const listing = g.byVenue.get(v);
+      if (!listing) {
+        rejectMissingVenueListing += 1;
+        ok = false;
+        break;
+      }
+      if (v === "polymarket" && !listing.tokenId) {
+        candidatesMissingExecutionId += 1;
+        ok = false;
+        break;
+      }
+      if (v === "limitless" && !listing.marketSlug) {
+        candidatesMissingExecutionId += 1;
+        ok = false;
+        break;
+      }
+      groupListings.push(listing);
+    }
+    if (!ok) continue;
+    candidates.push({ title: g.title, predexonId, listings: groupListings });
+  }
+
+  return { candidates, candidatesCanonical, rejectMissingVenueListing, candidatesMissingExecutionId };
 };
 
 export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: TradeClient; statePath: string }) => {
@@ -231,10 +379,13 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
     const tickStats: Record<string, any> = {
       openPositions: openPositions.length,
       candidates: 0,
+      candidatesCanonical: 0,
       candidatesMissingTokenId: 0,
+      candidatesMissingExecutionId: 0,
       skippedOutcome404: 0,
       bestNull: 0,
       rejectCooldown: 0,
+      rejectMissingVenueListing: 0,
       rejectSpread: 0,
       rejectDepth: 0,
       rejectRisk: 0,
@@ -391,10 +542,14 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
     let openAfter = state.positions.filter((p) => p.status === "open");
     if (openAfter.length < cfg.risk.maxOpenPositions) {
-      let marketsPayload: any;
+      let discoveryPayload: any;
       try {
         await limiter.wait();
-        marketsPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
+        if (polymarketOnly) {
+          discoveryPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
+        } else {
+          discoveryPayload = await opts.data.listCanonicalListings({ limit: cfg.maxMarketsScan, routableOnly: true, status: "open" });
+        }
       } catch (e: any) {
         process.stdout.write(
           JSON.stringify(
@@ -406,8 +561,18 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         await sleep(isAbortError(e) ? 5_000 : 2_000);
         continue;
       }
-      const candidates = extractMarketCandidates(marketsPayload, cfg.candidate);
-      tickStats.candidates = candidates.length;
+      let candidates: MarketCandidate[] = [];
+      if (polymarketOnly) {
+        candidates = extractMarketCandidates(discoveryPayload, cfg.candidate);
+        tickStats.candidates = candidates.length;
+      } else {
+        const extracted = extractCanonicalListingCandidates({ listingsPayload: discoveryPayload, enabledVenues });
+        candidates = extracted.candidates;
+        tickStats.candidates = candidates.length;
+        tickStats.candidatesCanonical = extracted.candidatesCanonical;
+        tickStats.rejectMissingVenueListing = extracted.rejectMissingVenueListing;
+        tickStats.candidatesMissingExecutionId = extracted.candidatesMissingExecutionId;
+      }
 
       for (const c of candidates) {
         openAfter = state.positions.filter((p) => p.status === "open");
@@ -425,14 +590,6 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
         const expByMarket = exposuresByMarket(state);
         const expTotal = totalExposure(state);
-
-        if (!polymarketOnly) {
-          const blockedUntil = outcome404Until.get(c.predexonId);
-          if (blockedUntil && blockedUntil > Date.now()) {
-            tickStats.skippedOutcome404 += 1;
-            continue;
-          }
-        }
 
         let best:
           | {
@@ -477,12 +634,14 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             askSize: q.askSize
           };
         } else {
-          best = await pickBestLiquidity({
+          if (!c.listings) continue;
+          best = await pickBestLiquidityFromListings({
             data: opts.data,
             predexonId: c.predexonId,
+            listings: c.listings,
             enabledVenues,
             limiter,
-            onOutcome404
+            filter: cfg.candidate
           });
         }
         if (!best) {
