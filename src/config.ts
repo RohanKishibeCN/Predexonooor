@@ -35,6 +35,7 @@ export type AppConfig = {
       maxHoldMinutes: number;
     };
     slippageGuardPct: number;
+    reentryCooldownSeconds: number;
   };
 };
 
@@ -121,7 +122,8 @@ export const loadConfigFromEnv = (): AppConfig => {
         stopLossPct: mustNumber(process.env.STOP_LOSS_PCT, "STOP_LOSS_PCT", 0.015),
         maxHoldMinutes: mustInt(process.env.MAX_HOLD_MINUTES, "MAX_HOLD_MINUTES", 60)
       },
-      slippageGuardPct: mustNumber(process.env.SLIPPAGE_GUARD_PCT, "SLIPPAGE_GUARD_PCT", 0.008)
+      slippageGuardPct: mustNumber(process.env.SLIPPAGE_GUARD_PCT, "SLIPPAGE_GUARD_PCT", 0.008),
+      reentryCooldownSeconds: mustInt(process.env.REENTRY_COOLDOWN_SECONDS, "REENTRY_COOLDOWN_SECONDS", 0)
     }
   };
 
