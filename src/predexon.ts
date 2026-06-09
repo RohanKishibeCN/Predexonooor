@@ -1,4 +1,4 @@
-export type Venue = "polymarket" | "limitless";
+export type Venue = "polymarket" | "limitless" | "hyperliquid";
 
 export class PredexonApiError extends Error {
   statusCode: number;
@@ -238,7 +238,7 @@ export class TradeClient {
     accountId: string;
     venue: Venue;
     predexonId?: string;
-    market?: { tokenId?: string; marketSlug?: string };
+    market?: { tokenId?: string; marketSlug?: string; assetId?: string };
     side: "buy" | "sell";
     type: "market" | "limit";
     amount?: number;
@@ -263,6 +263,21 @@ export class TradeClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload)
     });
+  }
+
+  routerQuote(params: {
+    accountId: string;
+    predexonId: string;
+    side: "buy" | "sell";
+    amount?: number;
+    size?: number;
+  }): Promise<any> {
+    const u = new URL(`${this.baseUrl}/api/accounts/${params.accountId}/router/quote`);
+    u.searchParams.set("predexonId", params.predexonId);
+    u.searchParams.set("side", params.side);
+    if (params.amount !== undefined) u.searchParams.set("amount", String(params.amount));
+    if (params.size !== undefined) u.searchParams.set("size", String(params.size));
+    return request(u.toString());
   }
 }
 

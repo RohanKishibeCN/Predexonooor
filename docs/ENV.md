@@ -32,10 +32,15 @@
 - `MIN_OUTCOME_PRICE`：候选 outcome 最小价格（默认 `0.05`；取值范围 0-1）
 - `MAX_OUTCOME_PRICE`：候选 outcome 最大价格（默认 `0.95`；取值范围 0-1）
 
-## Venue（本期仅支持 Polymarket + Limitless）
+## Venue（支持 Polymarket + Limitless，以及 Polymarket + Hyperliquid）
 
 - `ENABLED_VENUES`：逗号分隔列表（默认 `polymarket,limitless`）
 - `VENUE_PREFER_ORDER`：逗号分隔列表（默认 `polymarket,limitless`）
+- 若 `ENABLED_VENUES` 包含 `hyperliquid`：
+- `ACCOUNT_ID` 在 `dry_run` 下也必填，因为 Router Quote 与 Trading positions 都是 account-scoped
+- bot 会自动切换为：入场用 Router Quote 选 venue，持仓盯市优先用 Trading API positions 的 `currentPrice`
+- Hyperliquid market buy 是 `size` 下单，不是 `amount`
+- Hyperliquid 单笔最小 notional 约为 `10 USDC`
 
 ## 流动性过滤
 
@@ -68,6 +73,15 @@
 
 配套 Notion 字段建议见 [NOTION_SCHEMA.md](file:///workspace/Predexonooor/docs/NOTION_SCHEMA.md)。
 
+## 实例建议
+
+- `pm+lt` 实例：`ENABLED_VENUES=polymarket,limitless`
+- `pm+hl` 实例：`ENABLED_VENUES=polymarket,hyperliquid`
+- 每个实例单独维护：
+- 一份 env，例如 `.env.pm-lt`、`.env.pm-hl`
+- 一个 state，例如 `state.pm-lt.json`、`state.pm-hl.json`
+- 一个 pm2 app name，例如 `predexonooor-pm-lt`、`predexonooor-pm-hl`
+
 ## 参数建议（10u 试水）
 
 如果你只充值 10u，建议先用更保守的风控与更低的请求密度，确认链路稳定后再逐步放开：
@@ -87,3 +101,14 @@
 - `REQUEST_INTERVAL_MS=1100`
 - `MIN_OUTCOME_PRICE=0.02`
 - `MAX_OUTCOME_PRICE=0.98`
+
+## 参数建议（pm+hl 最小可成交）
+
+- `ENABLED_VENUES=polymarket,hyperliquid`
+- `ACCOUNT_ID=<pm+hl account id>`
+- `MAX_PER_TRADE_USD=10`（建议从 `10` 或 `12` 起步）
+- `MAX_EXPOSURE_PER_MARKET_USD>=10`
+- `MAX_TOTAL_EXPOSURE_USD>=20`
+- `MAX_OPEN_POSITIONS=1`
+- `POLL_INTERVAL_SECONDS=30` 或更高
+- `REQUEST_INTERVAL_MS=1100`

@@ -12,8 +12,8 @@ export type AppConfig = {
     maxOutcomePrice: number;
   };
   venues: {
-    enabled: Array<"polymarket" | "limitless">;
-    preferOrder: Array<"polymarket" | "limitless">;
+    enabled: Array<"polymarket" | "limitless" | "hyperliquid">;
+    preferOrder: Array<"polymarket" | "limitless" | "hyperliquid">;
   };
   liquidity: {
     maxSpread: number;
@@ -70,15 +70,18 @@ const toBool = (v: unknown): boolean => {
   return s === "1" || s === "true" || s === "yes" || s === "y" || s === "on";
 };
 
-const mustVenueList = (v: unknown, defaultValue: Array<"polymarket" | "limitless">): Array<"polymarket" | "limitless"> => {
+const mustVenueList = (
+  v: unknown,
+  defaultValue: Array<"polymarket" | "limitless" | "hyperliquid">
+): Array<"polymarket" | "limitless" | "hyperliquid"> => {
   const s = String(v ?? "").trim();
   if (!s) return defaultValue;
   const items = s
     .split(",")
     .map((x) => x.trim())
     .filter(Boolean);
-  const allowed = new Set(["polymarket", "limitless"]);
-  const out: Array<"polymarket" | "limitless"> = [];
+  const allowed = new Set(["polymarket", "limitless", "hyperliquid"]);
+  const out: Array<"polymarket" | "limitless" | "hyperliquid"> = [];
   for (const it of items) {
     if (!allowed.has(it)) throw new Error(`Invalid venue in ENABLED_VENUES: ${it}`);
     out.push(it as any);
