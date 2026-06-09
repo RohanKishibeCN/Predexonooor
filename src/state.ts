@@ -3,8 +3,9 @@ import fs from "node:fs";
 export type Position = {
   id: string;
   predexonId: string;
-  venue: "polymarket" | "limitless";
+  venue: "polymarket" | "limitless" | "hyperliquid";
   tokenId?: string;
+  assetId?: string;
   size: number;
   entryPrice: number;
   entryTs: number;
@@ -19,7 +20,7 @@ export type Fill = {
   ts: number;
   dayISO: string;
   accountId: string;
-  venue: "polymarket" | "limitless";
+  venue: "polymarket" | "limitless" | "hyperliquid";
   predexonId: string;
   side: "buy" | "sell";
   filledSize: number;
@@ -30,7 +31,7 @@ export type Fill = {
 
 export type Lot = {
   predexonId: string;
-  venue: "polymarket" | "limitless";
+  venue: "polymarket" | "limitless" | "hyperliquid";
   size: number;
   price: number;
 };

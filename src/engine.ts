@@ -22,6 +22,20 @@ type MarketCandidate = {
   listings?: VenueListing[];
 };
 
+type ExecutionChoice = {
+  venue: "polymarket" | "limitless" | "hyperliquid";
+  tokenId?: string;
+  marketSlug?: string;
+  assetId?: string;
+  quoteMid: number;
+  bestAsk: number;
+  bestBid: number;
+  bidSize: number;
+  askSize: number;
+  buyAmount?: number;
+  buySize?: number;
+};
+
 const todayISO = (): string => {
   const d = new Date();
   const y = d.getFullYear();
@@ -33,6 +47,11 @@ const todayISO = (): string => {
 const toNumber = (v: any): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+};
+
+const venueRank = (venue: string, preferOrder: string[]): number => {
+  const idx = preferOrder.indexOf(venue);
+  return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
 };
 
 const parseExecutedFill = (resp: any): { ok: boolean; filledSize: number; avgPrice: number; orderId: string } => {
@@ -55,6 +74,81 @@ const parseListings = (outcome: any): VenueListing[] => {
     marketSlug: v?.market_slug ? String(v.market_slug) : undefined,
     side: v?.side ? String(v.side) : undefined
   }));
+};
+
+const parseTradePositions = (payload: any): Map<string, { currentPrice: number }> => {
+  const out = new Map<string, { currentPrice: number }>();
+  const positions = (payload?.positions ?? []) as any[];
+  for (const p of positions) {
+    const predexonId = String(p?.predexonId ?? p?.predexon_id ?? "").trim();
+    const venue = String(p?.venue ?? "").trim();
+    const currentPrice = toNumber(p?.currentPrice ?? p?.current_price);
+    if (!predexonId || !venue || currentPrice <= 0) continue;
+    out.set(`${venue}:${predexonId}`, { currentPrice });
+  }
+  return out;
+};
+
+const pickBestVenueFromRouterQuote = (opts: {
+  quotePayload: any;
+  enabledVenues: Set<string>;
+  preferOrder: string[];
+  intendedNotional: number;
+  tokenId?: string;
+  requireAllEnabledVenues?: boolean;
+}): ExecutionChoice | null => {
+  const venues = (opts.quotePayload?.venues ?? []) as any[];
+  const viable: ExecutionChoice[] = [];
+  const viableVenues = new Set<string>();
+
+  for (const row of venues) {
+    const venue = String(row?.venue ?? "");
+    if (!opts.enabledVenues.has(venue)) continue;
+
+    const estimatedFillPrice = toNumber(row?.estimatedFillPrice ?? row?.estimated_fill_price ?? row?.bestPrice ?? row?.best_price);
+    const estimatedFillSize = toNumber(row?.estimatedFillSize ?? row?.estimated_fill_size);
+    const availableLiquidity = toNumber(row?.availableLiquidity ?? row?.available_liquidity ?? estimatedFillSize);
+    if (estimatedFillPrice <= 0 || estimatedFillSize <= 0) continue;
+
+    if (venue === "hyperliquid" && estimatedFillPrice * estimatedFillSize + 1e-9 < 10) {
+      continue;
+    }
+
+    viable.push({
+      venue: venue as ExecutionChoice["venue"],
+      tokenId: venue === "polymarket" ? opts.tokenId : undefined,
+      quoteMid: estimatedFillPrice,
+      // Router Quote exposes fill estimates instead of both sides of the book.
+      bestAsk: estimatedFillPrice,
+      bestBid: estimatedFillPrice,
+      bidSize: availableLiquidity,
+      askSize: availableLiquidity,
+      buyAmount: venue === "hyperliquid" ? undefined : opts.intendedNotional,
+      buySize: venue === "hyperliquid" ? estimatedFillSize : undefined
+    });
+    viableVenues.add(venue);
+  }
+
+  if (opts.requireAllEnabledVenues) {
+    for (const venue of opts.enabledVenues) {
+      if (!viableVenues.has(venue)) return null;
+    }
+  }
+
+  viable.sort((a, b) => {
+    if (Math.abs(a.bestAsk - b.bestAsk) > 1e-12) return a.bestAsk - b.bestAsk;
+    return venueRank(a.venue, opts.preferOrder) - venueRank(b.venue, opts.preferOrder);
+  });
+
+  return viable[0] ?? null;
+};
+
+const pickVenueMarkFromRouterQuote = (quotePayload: any, venue: string): number | null => {
+  const venues = (quotePayload?.venues ?? []) as any[];
+  const row = venues.find((v) => String(v?.venue ?? "") === venue);
+  if (!row) return null;
+  const price = toNumber(row?.estimatedFillPrice ?? row?.estimated_fill_price ?? row?.bestPrice ?? row?.best_price);
+  return price > 0 ? price : null;
 };
 
 const quoteListing = async (data: DataClient, listing: VenueListing) => {
@@ -329,12 +423,17 @@ const extractCanonicalListingCandidates = (opts: {
 export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: TradeClient; statePath: string }) => {
   const enabledVenues = new Set(cfg.venues.enabled);
   const polymarketOnly = enabledVenues.size === 1 && enabledVenues.has("polymarket");
+  const hasHyperliquid = enabledVenues.has("hyperliquid");
   const limiter = new RateLimiter(cfg.requestIntervalMs);
 
   const limits: RiskLimits = { ...cfg.risk };
   const riskState = initialRiskState(limits);
 
   const state: BotState = loadState(opts.statePath);
+
+  if (hasHyperliquid && !cfg.accountId) {
+    throw new Error("ACCOUNT_ID is required when ENABLED_VENUES includes hyperliquid");
+  }
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const isAbortError = (e: any) => String(e?.name ?? "") === "AbortError";
@@ -375,6 +474,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
   while (true) {
     syncRealizedRisk();
     const openPositions = state.positions.filter((p) => p.status === "open");
+    let tradePositions = new Map<string, { currentPrice: number }>();
     const tickStartedAt = Date.now();
     const tickStats: Record<string, any> = {
       openPositions: openPositions.length,
@@ -392,57 +492,70 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       entered: 0
     };
 
+    if (hasHyperliquid && openPositions.length > 0 && cfg.mode === "live") {
+      await limiter.wait();
+      try {
+        tradePositions = parseTradePositions(await opts.trade.getPositions(cfg.accountId));
+      } catch (e: any) {
+        process.stdout.write(
+          JSON.stringify(
+            { event: "positions_error", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+            null,
+            2
+          ) + "\n"
+        );
+      }
+    }
+
     for (const pos of openPositions) {
       let qMid: number | null = null;
       let bestBid: number | null = null;
       let bestAsk: number | null = null;
 
-      await limiter.wait();
-      if (pos.venue === "polymarket") {
-        if (!pos.tokenId) continue;
-        let q: any = null;
+      if (hasHyperliquid && cfg.mode === "live") {
+        const mark = tradePositions.get(`${pos.venue}:${pos.predexonId}`);
+        if (mark?.currentPrice) {
+          qMid = mark.currentPrice;
+          bestBid = mark.currentPrice;
+          bestAsk = mark.currentPrice;
+        }
+      }
+
+      if (hasHyperliquid && qMid === null) {
+        await limiter.wait();
         try {
-          q = await quotePolymarketToken(opts.data, pos.tokenId);
+          const quote = await opts.trade.routerQuote({
+            accountId: cfg.accountId,
+            predexonId: pos.predexonId,
+            side: "sell",
+            size: pos.size
+          });
+          const price = pickVenueMarkFromRouterQuote(quote, pos.venue);
+          if (price !== null) {
+            qMid = price;
+            bestBid = price;
+            bestAsk = price;
+          }
         } catch (e: any) {
           process.stdout.write(
             JSON.stringify(
-              { event: "quote_error", predexonId: pos.predexonId, venue: "polymarket", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+              { event: "router_quote_error", predexonId: pos.predexonId, venue: pos.venue, statusCode: e?.statusCode, message: String(e?.message ?? e) },
               null,
               2
             ) + "\n"
           );
-          continue;
         }
-        if (q) {
-          qMid = mid(q);
-          bestBid = q.bestBid;
-          bestAsk = q.bestAsk;
-        }
-      } else if (pos.venue === "limitless") {
-        let outcome: any;
-        try {
-          outcome = await opts.data.getOutcome(pos.predexonId, true);
-        } catch (e: any) {
-          if (e instanceof PredexonApiError && e.statusCode === 404) continue;
-          process.stdout.write(
-            JSON.stringify(
-              { event: "outcome_error", predexonId: pos.predexonId, statusCode: e?.statusCode, message: String(e?.message ?? e) },
-              null,
-              2
-            ) + "\n"
-          );
-          continue;
-        }
-        const listing = parseListings(outcome).find((l) => l.venue === "limitless");
-        if (listing?.marketSlug) {
-          const side = listing.side === "no" ? "no" : "yes";
+      } else if (!hasHyperliquid) {
+        await limiter.wait();
+        if (pos.venue === "polymarket") {
+          if (!pos.tokenId) continue;
           let q: any = null;
           try {
-            q = await quoteLimitlessMarket(opts.data, listing.marketSlug, side);
+            q = await quotePolymarketToken(opts.data, pos.tokenId);
           } catch (e: any) {
             process.stdout.write(
               JSON.stringify(
-                { event: "quote_error", predexonId: pos.predexonId, venue: "limitless", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                { event: "quote_error", predexonId: pos.predexonId, venue: "polymarket", statusCode: e?.statusCode, message: String(e?.message ?? e) },
                 null,
                 2
               ) + "\n"
@@ -453,6 +566,42 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             qMid = mid(q);
             bestBid = q.bestBid;
             bestAsk = q.bestAsk;
+          }
+        } else if (pos.venue === "limitless") {
+          try {
+            const outcome = await opts.data.getOutcome(pos.predexonId, true);
+            const listing = parseListings(outcome).find((l) => l.venue === "limitless");
+            if (listing?.marketSlug) {
+              const side = listing.side === "no" ? "no" : "yes";
+              let q: any = null;
+              try {
+                q = await quoteLimitlessMarket(opts.data, listing.marketSlug, side);
+              } catch (e: any) {
+                process.stdout.write(
+                  JSON.stringify(
+                    { event: "quote_error", predexonId: pos.predexonId, venue: "limitless", statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                    null,
+                    2
+                  ) + "\n"
+                );
+                continue;
+              }
+              if (q) {
+                qMid = mid(q);
+                bestBid = q.bestBid;
+                bestAsk = q.bestAsk;
+              }
+            }
+          } catch (e: any) {
+            if (e instanceof PredexonApiError && e.statusCode === 404) continue;
+            process.stdout.write(
+              JSON.stringify(
+                { event: "outcome_error", predexonId: pos.predexonId, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                null,
+                2
+              ) + "\n"
+            );
+            continue;
           }
         }
       }
@@ -487,8 +636,8 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         const resp = await opts.trade.placeOrder({
           accountId: cfg.accountId,
           venue: pos.venue,
-          predexonId: pos.venue === "polymarket" ? undefined : pos.predexonId,
-          market: pos.venue === "polymarket" ? { tokenId: pos.tokenId } : undefined,
+          predexonId: hasHyperliquid ? pos.predexonId : pos.venue === "polymarket" ? undefined : pos.predexonId,
+          market: hasHyperliquid ? undefined : pos.venue === "polymarket" ? { tokenId: pos.tokenId } : undefined,
           side: "sell",
           type: "market",
           size: pos.size,
@@ -545,7 +694,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
       let discoveryPayload: any;
       try {
         await limiter.wait();
-        if (polymarketOnly) {
+        if (polymarketOnly || hasHyperliquid) {
           discoveryPayload = await opts.data.listDiscoveryMarkets({ limit: cfg.maxMarketsScan });
         } else {
           discoveryPayload = await opts.data.listCanonicalListings({ limit: cfg.maxMarketsScan, routableOnly: true, status: "open" });
@@ -562,7 +711,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         continue;
       }
       let candidates: MarketCandidate[] = [];
-      if (polymarketOnly) {
+      if (polymarketOnly || hasHyperliquid) {
         candidates = extractMarketCandidates(discoveryPayload, cfg.candidate);
         tickStats.candidates = candidates.length;
       } else {
@@ -590,18 +739,11 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
 
         const expByMarket = exposuresByMarket(state);
         const expTotal = totalExposure(state);
+        const intendedNotional = Math.min(cfg.risk.maxPerTradeUsd, cfg.risk.maxTotalExposureUsd - expTotal);
+        if (intendedNotional <= 0) continue;
 
         let best:
-          | {
-              venue: "polymarket" | "limitless";
-              tokenId?: string;
-              marketSlug?: string;
-              quoteMid: number;
-              bestAsk: number;
-              bestBid: number;
-              bidSize: number;
-              askSize: number;
-            }
+          | ExecutionChoice
           | null = null;
 
         if (polymarketOnly) {
@@ -633,6 +775,34 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             bidSize: q.bidSize,
             askSize: q.askSize
           };
+        } else if (hasHyperliquid) {
+          await limiter.wait();
+          let quote: any = null;
+          try {
+            quote = await opts.trade.routerQuote({
+              accountId: cfg.accountId,
+              predexonId: c.predexonId,
+              side: "buy",
+              amount: intendedNotional
+            });
+          } catch (e: any) {
+            process.stdout.write(
+              JSON.stringify(
+                { event: "router_quote_error", predexonId: c.predexonId, statusCode: e?.statusCode, message: String(e?.message ?? e) },
+                null,
+                2
+              ) + "\n"
+            );
+            continue;
+          }
+          best = pickBestVenueFromRouterQuote({
+            quotePayload: quote,
+            enabledVenues,
+            preferOrder: cfg.venues.preferOrder,
+            intendedNotional,
+            tokenId: c.tokenId,
+            requireAllEnabledVenues: true
+          });
         } else {
           if (!c.listings) continue;
           best = await pickBestLiquidityFromListings({
@@ -645,6 +815,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           });
         }
         if (!best) {
+          if (hasHyperliquid) tickStats.rejectMissingVenueListing += 1;
           tickStats.bestNull += 1;
           continue;
         }
@@ -661,8 +832,6 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           continue;
         }
 
-        const intendedNotional = Math.min(cfg.risk.maxPerTradeUsd, cfg.risk.maxTotalExposureUsd - expTotal);
-        if (intendedNotional <= 0) continue;
         const marketExp = expByMarket[c.predexonId] ?? 0;
         const gate = canOpenTrade({
           limits,
@@ -700,11 +869,12 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           const resp = await opts.trade.placeOrder({
             accountId: cfg.accountId,
             venue: best.venue,
-            predexonId: best.venue === "polymarket" ? undefined : c.predexonId,
-            market: best.venue === "polymarket" ? { tokenId: best.tokenId } : undefined,
+            predexonId: hasHyperliquid ? c.predexonId : best.venue === "polymarket" ? undefined : c.predexonId,
+            market: hasHyperliquid ? undefined : best.venue === "polymarket" ? { tokenId: best.tokenId } : undefined,
             side: "buy",
             type: "market",
-            amount: intendedNotional,
+            amount: best.buyAmount ?? intendedNotional,
+            size: best.buySize,
             clientId
           });
           const exec = parseExecutedFill(resp);
@@ -738,6 +908,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
             predexonId: c.predexonId,
             venue: best.venue,
             tokenId: best.venue === "polymarket" ? best.tokenId : undefined,
+            assetId: best.venue === "hyperliquid" ? best.assetId : undefined,
             size: filledSize,
             entryPrice,
             entryTs: Date.now(),
@@ -751,7 +922,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
         }
 
         const entryPrice = Math.min(0.999, best.bestAsk * (1 + cfg.execution.slippageGuardPct));
-        const size = Math.max(0.01, intendedNotional / entryPrice);
+        const size = Math.max(0.01, best.buySize ?? intendedNotional / entryPrice);
         const tp = entryPrice * (1 + cfg.execution.entry.takeProfitPct);
         const sl = entryPrice * (1 - cfg.execution.entry.stopLossPct);
         const maxHoldUntil = Date.now() + cfg.execution.entry.maxHoldMinutes * 60_000;
@@ -777,6 +948,7 @@ export const runBot = async (cfg: AppConfig, opts: { data: DataClient; trade: Tr
           predexonId: c.predexonId,
           venue: best.venue,
           tokenId: best.venue === "polymarket" ? best.tokenId : undefined,
+          assetId: best.venue === "hyperliquid" ? best.assetId : undefined,
           size,
           entryPrice,
           entryTs: Date.now(),
