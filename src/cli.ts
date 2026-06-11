@@ -73,7 +73,7 @@ const main = async () => {
     .command("bot")
     .option("--state <path>", "state json path")
     .action(async (opts) => {
-      const statePath = String(opts.state ?? process.env.STATE_PATH ?? "state.json");
+      const statePath = String(opts.state ?? process.env.STATE_PATH ?? "state_live.json");
       const cfg = loadConfigFromEnv();
       const data = new DataClient();
       const trade = new TradeClient();
@@ -89,11 +89,11 @@ const main = async () => {
       const cfg = loadNotionConfigFromEnv();
       if (!cfg) throw new Error("NOTION_API_TOKEN and NOTION_DATABASE_ID are required");
 
-      const statePath = String(opts.state ?? process.env.STATE_PATH ?? "state.json");
+      const statePath = String(opts.state ?? process.env.STATE_PATH ?? "state_live.json");
       const state = loadState(statePath);
 
-      const dateISO = String(opts.date ?? todayISO());
-      const accountId = String(opts.accountId ?? process.env.ACCOUNT_ID ?? "").trim();
+      const dateISO = String(process.env.NOTION_DATE_ISO ?? opts.date ?? todayISO());
+      const accountId = String(process.env.NOTION_ACCOUNT_ID ?? opts.accountId ?? process.env.ACCOUNT_ID ?? "").trim();
       if (!accountId) throw new Error("ACCOUNT_ID is required (or pass --account-id)");
 
       const mode = toBool(process.env.DRY_RUN) ? "dry_run" : String(process.env.MODE ?? "live");

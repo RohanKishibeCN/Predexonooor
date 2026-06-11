@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "predexonooor-pm-lt",
       script: "dist/cli.js",
-      args: "--env-file .env.pm-lt bot --state state.pm-lt.json",
+      args: "--env-file .env.pm-lt bot",
       autorestart: true,
       max_restarts: 10,
       time: true,
@@ -15,7 +15,7 @@ module.exports = {
     {
       name: "predexonooor-pm-hl",
       script: "dist/cli.js",
-      args: "--env-file .env.pm-hl bot --state state.pm-hl.json",
+      args: "--env-file .env.pm-hl bot",
       autorestart: true,
       max_restarts: 10,
       time: true,
